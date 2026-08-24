@@ -31,6 +31,7 @@ import { ApiError, TaskboardDatabase } from "./database.mjs";
 import { createJiraConfigStore } from "./jira-config.mjs";
 import { createJiraIntegration } from "./jira-integration.mjs";
 import { ProjectSummaryService } from "./project-summary.mjs";
+import { handleResearchRequest } from "./research-routes.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
@@ -2382,6 +2383,18 @@ export function createTaskboardServer(options = {}) {
           }
         }
       }
+
+      if (await handleResearchRequest({
+        request,
+        response,
+        url,
+        research: database.research,
+        readJson,
+        sendJson,
+        sendEmpty,
+        methodNotAllowed,
+        ApiError,
+      })) return;
 
       if (pathname === "/api/projects") {
         if (request.method === "GET") {

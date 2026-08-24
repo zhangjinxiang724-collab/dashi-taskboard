@@ -55,6 +55,7 @@ import type { AiChatOpenThreadRequest } from "./components/AiChat";
 import { BoardCardDisplayMenu } from "./components/BoardCardDisplayMenu";
 import { DashboardView } from "./components/DashboardView";
 import { ProjectReadmeView } from "./components/ProjectReadmeView";
+import { ResearchBoard } from "./components/ResearchBoard";
 import { IssueListView } from "./components/IssueListView";
 import { JiraConnectionDialog } from "./components/JiraConnectionDialog";
 import { OtherTasksPanel } from "./components/OtherTasksPanel";
@@ -87,6 +88,7 @@ import {
   setEmbeddedFrameChallenge,
 } from "./embeddedHost.mjs";
 import { buildIssueUrl, readIssueIdentifier } from "./issueRoute";
+import type { ResearchTaskSummary } from "./researchTypes";
 import {
   getTaskboardI18n,
   resolveTaskboardLanguage,
@@ -684,6 +686,7 @@ export function App() {
   const embedded = host === "codex" || host === "workbuddy" || host === "deepseek-harness";
   const undoShortcut = navigator.userAgent.includes("Macintosh") ? "⌘Z" : "Ctrl+Z";
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const [workspaceMode, setWorkspaceMode] = useState<"tasks" | "research">("tasks");
   const [hostContext, setHostContext] = useState<HostContext | null>(null);
   const language = resolveTaskboardLanguage(
     hostContext?.language ?? query.get("lang") ?? navigator.language,
@@ -1505,6 +1508,31 @@ export function App() {
     window.history.replaceState(window.history.state, "", url);
   }
 
+  function showTaskBoard() {
+    setWorkspaceMode("tasks");
+  }
+
+  function showResearchBoard() {
+    setWorkspaceMode("research");
+    setProjectMenuOpen(false);
+    setEditor(null);
+    detailSourceProjectIdRef.current = null;
+    setDetailTaskIdentifier(null);
+    const url = buildIssueUrl(window.location.href, selectedProjectId, null);
+    window.history.replaceState(window.history.state, "", url);
+  }
+
+  function openTaskFromResearch(task: ResearchTaskSummary) {
+    setWorkspaceMode("tasks");
+    setProjectMenuOpen(false);
+    detailSourceProjectIdRef.current = null;
+    setBoardView(readProjectBoardView(task.projectId));
+    setSelectedProjectId(task.projectId);
+    setDetailTaskIdentifier(task.identifier);
+    const url = buildIssueUrl(window.location.href, task.projectId, task.identifier);
+    window.history.replaceState(window.history.state, "", url);
+  }
+
   useLayoutEffect(() => {
     if (detailTaskIdentifier) return;
     const pendingScroll = pendingDetailSourceScrollRef.current;
@@ -2080,6 +2108,7 @@ export function App() {
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
+      if (workspaceMode !== "tasks") return;
       const target = event.target as HTMLElement | null;
       const isTyping = target?.matches("input, textarea, select, [contenteditable='true']");
       if (
@@ -2120,7 +2149,7 @@ export function App() {
 
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [boardView, contextMenu, detailTaskId, editor, isJiraProject, projectMenuOpen, selectedProjectId]);
+  }, [boardView, contextMenu, detailTaskId, editor, isJiraProject, projectMenuOpen, selectedProjectId, workspaceMode]);
 
   const filteredTasks = useMemo(() => {
     return tasks.filter(
@@ -3217,7 +3246,11 @@ export function App() {
                   <LinearIcon name="codexSidebarExpand" />
                 </button>
               )}
-              <div className="header-project-switcher" data-project-switcher>
+              <nav className="workspace-mode-switcher" aria-label={text("产品视图", "Product view")}>
+                <button className={workspaceMode === "tasks" ? "active" : ""} type="button" aria-pressed={workspaceMode === "tasks"} onClick={showTaskBoard}>Task Board</button>
+                <button className={workspaceMode === "research" ? "active" : ""} type="button" aria-pressed={workspaceMode === "research"} onClick={showResearchBoard}>Research Board</button>
+              </nav>
+              {workspaceMode === "tasks" && <div className="header-project-switcher" data-project-switcher>
                 <button
                   className="header-project-button"
                   type="button"
@@ -3304,14 +3337,14 @@ export function App() {
                     </button>
                   </div>
                 )}
-              </div>
+              </div>}
             </div>
           </div>
 
           <div ref={dragRegionRef} className="workspace-drag-region" aria-hidden="true" />
 
           <div className="header-actions">
-            {selectedProject && (
+            {workspaceMode === "tasks" && selectedProject && (
               <ProjectAutomationMenu
                 automation={selectedProjectAutomation}
                 models={automationModels}
@@ -3322,7 +3355,7 @@ export function App() {
                 onChange={(options) => void saveProjectAutomation(options)}
               />
             )}
-            {isJiraProject && (
+            {workspaceMode === "tasks" && isJiraProject && (
               <button
                 className="icon-button"
                 type="button"
@@ -3334,7 +3367,7 @@ export function App() {
                 <RefreshIcon color="currentColor" />
               </button>
             )}
-            {selectedProjectId && !isJiraProject && (
+            {workspaceMode === "tasks" && selectedProjectId && !isJiraProject && (
               <button
                 className="icon-button header-create-button"
                 type="button"
@@ -3348,7 +3381,7 @@ export function App() {
           </div>
         </header>
 
-        {selectedProjectId && !detailTask && <div className="board-toolbar">
+        {workspaceMode === "tasks" && selectedProjectId && !detailTask && <div className="board-toolbar">
           <div className="view-tabs" aria-label={text("看板视图", "Board views")}>
             <button
               className={`view-tab${boardView === "dashboard" ? " active" : ""}`}
@@ -3498,7 +3531,9 @@ export function App() {
           </div>
         )}
 
-        {detailTask && selectedProject ? (
+        {workspaceMode === "research" ? (
+          <ResearchBoard onOpenTask={openTaskFromResearch} />
+        ) : detailTask && selectedProject ? (
           <TaskDetail
             key={detailTask.id}
             task={detailTask}
@@ -3987,7 +4022,7 @@ export function App() {
         />
       )}
 
-      {localAiChatAvailable && !isAllProjects && (
+      {workspaceMode === "tasks" && localAiChatAvailable && !isAllProjects && (
         <Suspense fallback={null}>
           <AiChat
             available
