@@ -59,7 +59,10 @@ Except for built-in help, every successful command writes one JSON object with `
 ```bash
 taskctl issue list [--project PROJECT_ID] [--status STATUS] [--archived true|false|all] [--json]
 taskctl issue get ID [--json]
+taskctl issue tree ID --direction descendants|ancestors --depth N [--json]
 ```
+
+`issue tree` is a bounded structural read. `--depth 1` returns only direct children or the direct parent; larger values include that many levels, up to 25. The response is flat and deterministic: every node carries `id`, traversal `parentId`, `depth`, and `path` (usable as a breadcrumb), plus a small task summary. It never calculates status rollups or changes issues.
 
 ## Create issues
 
@@ -107,12 +110,22 @@ taskctl issue update ID \
   [--if-version N] \
   [--json]
 
-taskctl issue move ID --status STATUS [--thread-id ID] [--if-version N] [--json]
+taskctl issue move ID --status STATUS \
+  [--thread-id ID] \
+  [--binding-thread-id ID \
+    [--binding-codex-project-id PROJECT_ID \
+     --binding-codex-project-kind local|remote \
+     --binding-codex-host-id HOST_ID \
+     --binding-workspace-path PATH] \
+   | --clear-binding-thread] \
+  [--if-version N] [--json]
 taskctl issue archive ID [--thread-id ID] [--if-version N] [--json]
 taskctl issue restore ID [--thread-id ID] [--if-version N] [--json]
 ```
 
 Use `issue move` to set `in_progress` before implementation and `in_review` after implementation and self-verification. Codex must not move work directly from `in_progress` to `done`; use `done` only after the user explicitly confirms acceptance or explicitly asks to mark the issue complete. Use `blocked` when work cannot continue and `canceled` when it will not continue. On a version conflict, fetch the issue again and reconcile before retrying.
+
+`--thread-id` records the conversation performing the mutation; it does not create a complete task binding. `--binding-thread-id` can stand alone to preserve a legacy local binding. If any binding identity option is present, all four identity options are required. `--clear-binding-thread` conflicts with every `--binding-*` option. A conversation that claims or continues an issue must pass all five `--binding-*` options together. Reuse an existing complete binding exactly. For an unbound local issue launched with injected Taskboard context, use the current conversation id, injected project id and workspace path, `local` project kind, and `local` host id. Never leave an active issue with only a legacy local `threadId`. Use `--clear-binding-thread` only when the workflow explicitly requires an unbound issue.
 
 Use either `--git-branch` or `--worktree-path`/`--worktree-branch`; an issue has only one development context. Issue JSON stores it as `developmentContext`, either `{ "type": "branch", "branch": "..." }` or `{ "type": "worktree", "path": "...", "branch": "..." }`. Its singular `threadId` is the Codex conversation that most recently created or changed the issue itself. Recurrence requires a due date.
 
@@ -147,7 +160,7 @@ taskctl issue relation remove ISSUE_ID \
 
 For `--type parent`, `ISSUE_ID` is the child and `PARENT_ISSUE_ID` is its parent. Adding another parent replaces the child's current parent atomically. To add an existing issue as a sub-issue, anchor the command on the child and pass the exact parent identifier with `--issue PARENT_ISSUE_ID`.
 
-For `blocks`, the anchor issue blocks the related issue. For `blocked_by`, the related issue blocks the anchor. `related` is symmetric. Self-relations, duplicates, parent cycles, and relations between different projects are rejected.
+For `blocks`, the anchor issue blocks the related issue. For `blocked_by`, the related issue blocks the anchor. `related` is symmetric. Self-relations, duplicates, and parent cycles are rejected. For compatibility, relation writes between different projects remain rejected for now; this is a temporary boundary, not the final hierarchy contract.
 
 ## Issue comments
 

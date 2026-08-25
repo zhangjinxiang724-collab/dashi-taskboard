@@ -7,6 +7,7 @@ import { DEFAULT_LABEL_NAMES, JIRA_PROJECT_ID } from "../shared/domain.mjs";
 import { ResearchDatabase } from "./research-database.mjs";
 
 const DEFAULT_PROJECT_LABELS_JSON = JSON.stringify(DEFAULT_LABEL_NAMES);
+const TASK_TREE_MAX_NODES = 1_000;
 
 export class ApiError extends Error {
   constructor(status, code, message, details) {
@@ -71,6 +72,17 @@ function storedThreadBinding(threadBinding, threadId) {
     binding?.codexHostId ?? null,
     binding?.workspacePath ?? null,
   ];
+}
+
+function storedThreadBindingForExisting(current, threadBinding, threadId) {
+  if (
+    threadBinding === undefined
+    && current?.threadBinding
+    && current.threadBinding.threadId === threadId
+  ) {
+    return storedThreadBinding(current.threadBinding, threadId);
+  }
+  return storedThreadBinding(threadBinding, threadId);
 }
 
 function attachTaskActivity(task, comments, activities, previewImage = null) {
@@ -279,6 +291,22 @@ function taskRelationSummaryFromRow(row) {
   };
 }
 
+function taskTreeNode(row, parentId, depth, path) {
+  return {
+    id: row.id,
+    parentId,
+    depth,
+    path,
+    summary: {
+      identifier: row.identifier,
+      title: row.title,
+      status: row.status,
+      priority: row.priority,
+      archivedAt: row.archived_at,
+    },
+  };
+}
+
 function commentFromRow(row) {
   const comment = {
     id: row.id,
@@ -411,11 +439,9 @@ function aiChatEventFromRow(row) {
 function projectPrefix(project) {
   const idPrefix = project.id.toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 12) || "TASK";
   const existingPrefix = project.first_identifier?.replace(/-\d+$/, "");
-  if (existingPrefix && existingPrefix !== idPrefix) return existingPrefix;
+  if (existingPrefix && /^[A-Z0-9]+$/i.test(existingPrefix) && existingPrefix !== idPrefix) return existingPrefix;
   if (idPrefix.length <= 5) return idPrefix;
-  const namePrefix = [...project.name.toUpperCase().replace(/[^\p{L}\p{N}]+/gu, "")]
-    .slice(0, 3)
-    .join("");
+  const namePrefix = project.name.toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 3);
   return namePrefix || idPrefix.slice(0, 3);
 }
 
@@ -796,6 +822,39 @@ export class TaskboardDatabase {
       CREATE UNIQUE INDEX IF NOT EXISTS task_relations_one_parent
         ON task_relations(target_task_id)
         WHERE relation_type = 'parent';
+
+      CREATE TRIGGER IF NOT EXISTS task_relations_require_same_project
+      BEFORE INSERT ON task_relations
+      BEGIN
+        SELECT RAISE(ABORT, 'CROSS_PROJECT_RELATION')
+        WHERE EXISTS (
+          SELECT 1
+          FROM tasks AS source
+          JOIN tasks AS target ON target.id = NEW.target_task_id
+          WHERE source.id = NEW.source_task_id
+            AND source.project_id != target.project_id
+        );
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS task_relations_prevent_parent_cycle
+      BEFORE INSERT ON task_relations
+      WHEN NEW.relation_type = 'parent'
+      BEGIN
+        SELECT RAISE(ABORT, 'RELATION_CYCLE')
+        WHERE EXISTS (
+          WITH RECURSIVE ancestors(id) AS (
+            SELECT source_task_id
+            FROM task_relations
+            WHERE relation_type = 'parent' AND target_task_id = NEW.source_task_id
+            UNION
+            SELECT task_relations.source_task_id
+            FROM task_relations
+            JOIN ancestors ON task_relations.target_task_id = ancestors.id
+            WHERE task_relations.relation_type = 'parent'
+          )
+          SELECT 1 FROM ancestors WHERE id = NEW.target_task_id
+        );
+      END;
     `);
 
     const taskRelationColumns = this.database.prepare("PRAGMA table_info(task_relations)").all();
@@ -1833,6 +1892,70 @@ export class TaskboardDatabase {
     return attachTaskActivity(task, comments, activities, previewImage);
   }
 
+  getTaskTree(id, direction, depth) {
+    const root = this.database.prepare(
+      "SELECT * FROM tasks WHERE id = ? OR identifier = ?",
+    ).get(id, id);
+    if (!root) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
+
+    const nodes = [taskTreeNode(root, null, 0, [root.id])];
+    const seen = new Set([root.id]);
+    let frontier = [nodes[0]];
+    const relationJoin = direction === "descendants"
+      ? `
+        FROM task_relations
+        JOIN tasks ON tasks.id = task_relations.target_task_id
+        WHERE task_relations.relation_type = 'parent'
+          AND task_relations.source_task_id IN (%PLACEHOLDERS%)
+      `
+      : `
+        FROM task_relations
+        JOIN tasks ON tasks.id = task_relations.source_task_id
+        WHERE task_relations.relation_type = 'parent'
+          AND task_relations.target_task_id IN (%PLACEHOLDERS%)
+      `;
+    const parentColumn = direction === "descendants"
+      ? "task_relations.source_task_id"
+      : "task_relations.target_task_id";
+
+    for (let level = 1; level <= depth && frontier.length > 0; level += 1) {
+      const placeholders = frontier.map(() => "?").join(", ");
+      const rows = this.database.prepare(`
+        SELECT tasks.*, ${parentColumn} AS tree_parent_id
+        ${relationJoin.replace("%PLACEHOLDERS%", placeholders)}
+        ORDER BY tasks.sort_order, tasks.created_at, tasks.id
+      `).all(...frontier.map((node) => node.id));
+      const rowsByParent = new Map();
+      for (const row of rows) {
+        const siblings = rowsByParent.get(row.tree_parent_id) ?? [];
+        siblings.push(row);
+        rowsByParent.set(row.tree_parent_id, siblings);
+      }
+      const next = [];
+      for (const parent of frontier) {
+        for (const row of rowsByParent.get(parent.id) ?? []) {
+          if (seen.has(row.id)) continue;
+          if (nodes.length >= TASK_TREE_MAX_NODES) {
+            throw new ApiError(413, "TREE_TOO_LARGE", `Task tree cannot exceed ${TASK_TREE_MAX_NODES} nodes`);
+          }
+          const node = taskTreeNode(row, parent.id, level, [...parent.path, row.id]);
+          nodes.push(node);
+          next.push(node);
+          seen.add(row.id);
+        }
+      }
+      frontier = next;
+    }
+
+    return {
+      rootId: root.id,
+      direction,
+      depth,
+      nodeCount: nodes.length,
+      nodes,
+    };
+  }
+
   createTask(input) {
     this.database.exec("BEGIN IMMEDIATE");
     try {
@@ -2021,7 +2144,7 @@ export class TaskboardDatabase {
       assignments.push("sort_order = ?");
       values.push(row.minimum === null ? 1000 : row.minimum - 1000);
     }
-    const storedBinding = storedThreadBinding(threadBinding, threadId);
+    const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
     if (storedBinding && !Object.hasOwn(changes, "projectId")) {
       assignments.push(
         "thread_id = ?",
@@ -2093,7 +2216,7 @@ export class TaskboardDatabase {
     }
 
     const timestamp = now();
-    const storedBinding = storedThreadBinding(threadBinding, threadId);
+    const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
     const threadAssignment = storedBinding
       ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
         thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -2126,7 +2249,7 @@ export class TaskboardDatabase {
     const current = this.#requireTask(id);
     this.#requireVersion(current, version);
     const timestamp = now();
-    const storedBinding = storedThreadBinding(threadBinding, threadId);
+    const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
     const threadAssignment = storedBinding
       ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
         thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -2162,7 +2285,7 @@ export class TaskboardDatabase {
       throw new ApiError(409, "TASK_NOT_ARCHIVED", "Only archived tasks can be restored");
     }
     const timestamp = now();
-    const storedBinding = storedThreadBinding(threadBinding, threadId);
+    const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
     const threadAssignment = storedBinding
       ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
         thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -2827,7 +2950,8 @@ export class TaskboardDatabase {
   }
 
   #touchTask(id, version, threadId, threadBinding, timestamp) {
-    const storedBinding = storedThreadBinding(threadBinding, threadId);
+    const current = this.#requireTask(id);
+    const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
     const threadAssignment = storedBinding
       ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
         thread_codex_host_id = ?, thread_workspace_path = ?,`

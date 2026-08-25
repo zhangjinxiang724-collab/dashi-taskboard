@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 #[cfg(target_os = "macos")]
 use std::cell::RefCell;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::os::{fd::AsRawFd, unix::process::CommandExt};
 use std::{
     fs::{self, File, OpenOptions},
@@ -73,7 +73,7 @@ use windows::{
 };
 
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 const LAUNCHER_STOP_TIMEOUT: Duration = Duration::from_secs(36);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 // Unique whole-directory snapshots shipped from app-v0.2.0 through v1.1.2.
@@ -85,7 +85,8 @@ const KNOWN_TASKBOARD_SKILL_DIGESTS: [&str; 6] = [
     "27131c82ac63c2884c1fcb7dd22a4e1c75975c7d79eb3fa3483a7949dd5f284d",
     "ae74aec793decf6d9013c36f4b53e01723796a45567b77e9e9f22b4a168d3fbe",
 ];
-#[cfg(target_os = "macos")]
+const TASKBOARD_PREFERRED_PORT: u16 = 47823;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 const TASKBOARD_LISTEN_FD: i32 = 5;
 
 #[derive(Clone, Serialize)]
@@ -124,7 +125,7 @@ struct LauncherState {
     update_in_progress: AtomicBool,
     generation: AtomicU64,
     lifecycle: Mutex<()>,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     taskboard_listener: Mutex<Option<TcpListener>>,
     #[cfg(target_os = "macos")]
     codex_port: Mutex<Option<u16>>,
@@ -219,7 +220,7 @@ struct UpdateDialog {
 
 #[cfg(target_os = "macos")]
 impl UpdateDialog {
-    fn prompt(version: &str) -> Option<Self> {
+    fn prompt(_app: &AppHandle, version: &str) -> Option<Self> {
         let message = format!("发现 Codex Taskboard {version}。是否现在下载、安装并重启？");
         let (response, result) = std::sync::mpsc::channel();
         let dialog = run_on_main(move |mtm| {
@@ -333,13 +334,47 @@ impl UpdateDialog {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 #[derive(Clone)]
 struct UpdateDialog;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 impl UpdateDialog {
-    fn prompt(_version: &str) -> Option<Self> {
+    fn prompt(app: &AppHandle, version: &str) -> Option<Self> {
+        app.dialog()
+            .message(format!(
+                "发现 Codex Taskboard {version}。是否现在下载、安装并重启？"
+            ))
+            .title("Codex Taskboard 更新")
+            .kind(MessageDialogKind::Info)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "立即更新".into(),
+                "稍后".into(),
+            ))
+            .blocking_show()
+            .then_some(Self)
+    }
+
+    fn show_progress(
+        &self,
+        _message: &str,
+        _cancel: tauri::async_runtime::Sender<()>,
+        _cancel_requested: Arc<AtomicBool>,
+    ) {
+    }
+
+    fn set_progress(&self, _message: &str, _progress: Option<u64>, _cancellable: bool) {}
+
+    fn close(&self) {}
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[derive(Clone)]
+struct UpdateDialog;
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+impl UpdateDialog {
+    fn prompt(_app: &AppHandle, _version: &str) -> Option<Self> {
         None
     }
 
@@ -382,7 +417,7 @@ impl LauncherState {
             update_in_progress: AtomicBool::new(false),
             generation: AtomicU64::new(0),
             lifecycle: Mutex::new(()),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             taskboard_listener: Mutex::new(None),
             #[cfg(target_os = "macos")]
             codex_port: Mutex::new(None),
@@ -396,7 +431,7 @@ impl LauncherState {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn acquire_instance_lock(path: &Path) -> Result<Option<File>, std::io::Error> {
     let file = OpenOptions::new()
         .create(true)
@@ -556,11 +591,17 @@ fn loopback_listener() -> Result<TcpListener, String> {
     TcpListener::bind(("127.0.0.1", 0)).map_err(|error| error.to_string())
 }
 
-#[cfg(target_os = "macos")]
+fn taskboard_loopback_listener() -> Result<TcpListener, String> {
+    TcpListener::bind(("127.0.0.1", TASKBOARD_PREFERRED_PORT))
+        .or_else(|_| TcpListener::bind(("127.0.0.1", 0)))
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn taskboard_listener(state: &LauncherState) -> Result<(Option<i32>, u16), String> {
     let mut listener = state.taskboard_listener.lock().unwrap();
     if listener.is_none() {
-        *listener = Some(loopback_listener()?);
+        *listener = Some(taskboard_loopback_listener()?);
     }
     let listener = listener.as_ref().unwrap();
     let port = listener
@@ -572,7 +613,7 @@ fn taskboard_listener(state: &LauncherState) -> Result<(Option<i32>, u16), Strin
 
 #[cfg(target_os = "windows")]
 fn taskboard_listener(_state: &LauncherState) -> Result<(Option<i32>, u16), String> {
-    let listener = loopback_listener()?;
+    let listener = taskboard_loopback_listener()?;
     let port = listener
         .local_addr()
         .map_err(|error| error.to_string())?
@@ -689,7 +730,7 @@ fn ordinary_codex_process(app_path: &Path) -> Result<Option<u32>, String> {
     Ok(ordinary_pid)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn process_is_running(pid: u32) -> bool {
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }
@@ -825,6 +866,74 @@ fn quit_codex_normally(pid: u32) -> Result<(), String> {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn find_codex_app(_home_directory: &Path) -> Option<PathBuf> {
+    let candidate = PathBuf::from("/usr/lib/chatgpt/ChatGPT");
+    candidate.is_file().then_some(candidate)
+}
+
+#[cfg(target_os = "linux")]
+fn ordinary_codex_process(app_path: &Path, codex_profile: &Path) -> Result<Option<u32>, String> {
+    let output = StdCommand::new("/bin/ps")
+        .args(["-ww", "-axo", "pid=,ppid=,command="])
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err("无法检查正在运行的 Codex".to_string());
+    }
+
+    let executable = app_path.to_string_lossy();
+    let mut processes = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let line = line.trim_start();
+        let Some(pid_separator) = line.find(char::is_whitespace) else {
+            continue;
+        };
+        let Some(pid) = line[..pid_separator].parse::<u32>().ok() else {
+            continue;
+        };
+        let parent_and_command = line[pid_separator..].trim_start();
+        let Some(parent_separator) = parent_and_command.find(char::is_whitespace) else {
+            continue;
+        };
+        let Some(parent_pid) = parent_and_command[..parent_separator].parse::<u32>().ok() else {
+            continue;
+        };
+        let command = parent_and_command[parent_separator..].trim_start();
+        if command != executable && !command.starts_with(&format!("{executable} ")) {
+            continue;
+        }
+        processes.push((pid, parent_pid, command.to_string()));
+    }
+
+    let managed_profile = format!("--user-data-dir={}", codex_profile.display());
+    Ok(processes
+        .iter()
+        .find(|(pid, parent_pid, command)| {
+            !processes
+                .iter()
+                .any(|(candidate_pid, _, _)| candidate_pid == parent_pid && candidate_pid != pid)
+                && !(command.contains(" --remote-debugging-pipe")
+                    && command.contains(&format!(" {managed_profile}")))
+        })
+        .map(|(pid, _, _)| *pid))
+}
+
+#[cfg(target_os = "linux")]
+fn quit_codex_normally(pid: u32) -> Result<(), String> {
+    if unsafe { libc::kill(pid as i32, libc::SIGTERM) } != 0 {
+        return Err("Codex 没有接受退出请求".to_string());
+    }
+    let deadline = Instant::now() + LAUNCHER_STOP_TIMEOUT;
+    while process_is_running(pid) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(100));
+    }
+    if process_is_running(pid) {
+        return Err("Codex 尚未退出，任务面板没有启动".to_string());
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 fn missing_codex_app_message() -> String {
     "未找到官方 ChatGPT.app 或 Codex.app。请先安装到 Applications 文件夹。".to_string()
@@ -835,7 +944,12 @@ fn missing_codex_app_message() -> String {
     "未找到官方 Codex App。请先从 Microsoft Store 安装。".to_string()
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(target_os = "linux")]
+fn missing_codex_app_message() -> String {
+    "未找到官方 ChatGPT App。请先安装 Ubuntu x64 .deb。".to_string()
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn send_process_group_signal(pid: u32, signal: i32) {
     unsafe {
         if libc::kill(-(pid as i32), signal) != 0 {
@@ -844,7 +958,7 @@ fn send_process_group_signal(pid: u32, signal: i32) {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn process_group_is_running(pid: u32) -> bool {
     unsafe { libc::kill(-(pid as i32), 0) == 0 }
 }
@@ -864,7 +978,7 @@ fn process_group_is_running(pid: u32) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn signal_pending_taskboard_open(state: &LauncherState) -> Result<(), String> {
     let mut snapshot = state.snapshot.lock().unwrap();
     if !snapshot.open_request_pending {
@@ -915,7 +1029,7 @@ fn wait_for_process_group_exit(pid: u32, timeout: Duration) -> bool {
     !process_group_is_running(pid)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn terminate_process_group(pid: u32) {
     send_process_group_signal(pid, libc::SIGTERM);
     if !wait_for_process_group_exit(pid, STOP_TIMEOUT) {
@@ -933,7 +1047,7 @@ fn terminate_process_group(pid: u32) {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn stop_launcher_process_group(pid: u32) {
     unsafe {
         libc::kill(pid as i32, libc::SIGTERM);
@@ -949,7 +1063,7 @@ fn stop_launcher_process_group(pid: u32) {
     terminate_process_group(pid);
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn process_matches_record(record: &LauncherPidRecord) -> bool {
     let output = StdCommand::new("/bin/ps")
         .args(["-p", &record.pid.to_string(), "-o", "command="])
@@ -1034,7 +1148,7 @@ fn stop_managed_child_locked(app: &AppHandle, state: &Arc<LauncherState>) {
         if !wait_for_process_group_exit(pid, STOP_TIMEOUT) {
             terminate_process_group(pid);
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         stop_launcher_process_group(pid);
         clear_pid_record(state, pid);
     }
@@ -1146,6 +1260,8 @@ fn start_launcher_locked(
         .ok_or_else(|| "无法定位 App 可执行文件目录".to_string())?
         .join(if cfg!(target_os = "windows") {
             "node.exe"
+        } else if cfg!(target_os = "linux") {
+            "codex-taskboard-node"
         } else {
             "node"
         });
@@ -1154,6 +1270,8 @@ fn start_launcher_locked(
     #[cfg(target_os = "macos")]
     let ordinary_codex_pid = ordinary_codex_process(&codex_app)?;
     #[cfg(target_os = "windows")]
+    let ordinary_codex_pid = ordinary_codex_process(&codex_app, &codex_profile)?;
+    #[cfg(target_os = "linux")]
     let ordinary_codex_pid = ordinary_codex_process(&codex_app, &codex_profile)?;
     if let Some(codex_pid) = ordinary_codex_pid {
         let restart = app
@@ -1196,7 +1314,7 @@ fn start_launcher_locked(
         "{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         resource_directory.join("bin").display()
     );
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     let path_value = {
         let current_path = std::env::var_os("PATH").unwrap_or_default();
         std::env::join_paths(
@@ -1220,14 +1338,20 @@ fn start_launcher_locked(
         .map(PathBuf::from)
         .ok_or_else(|| "APPDATA is unavailable".to_string())?
         .join("Codex/web/Codex");
+    #[cfg(target_os = "linux")]
+    let codex_source_profile = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_directory.join(".config"))
+        .join("Codex");
     let mut command = StdCommand::new(&node_path);
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     command.arg(&injector_path);
     #[cfg(target_os = "windows")]
     command.arg(r"scripts\codex-injector.mjs");
     #[cfg(target_os = "macos")]
     command.args(["--launch", "--watch", "--open", "--port", &codex_port]);
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     command.args(["--launch", "--watch", "--open", "--cdp-pipe"]);
     command
         .args(["--startup-token", &instance_token, "--app-path"])
@@ -1259,7 +1383,7 @@ fn start_launcher_locked(
         .stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
     command.stdin(Stdio::piped());
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     unsafe {
         let taskboard_listener_fd = _taskboard_listener_fd.unwrap();
         command
@@ -1301,7 +1425,7 @@ fn start_launcher_locked(
             "Started launcher child {pid} on Taskboard {taskboard_port} with Codex CDP {codex_port}"
         ),
     );
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     append_log(
         state,
         &format!(
@@ -1473,6 +1597,11 @@ fn open_taskboard_in_browser(state: &LauncherState) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let status = StdCommand::new("rundll32.exe")
         .args(["url.dll,FileProtocolHandler", &url])
+        .status()
+        .map_err(|error| error.to_string())?;
+    #[cfg(target_os = "linux")]
+    let status = StdCommand::new("xdg-open")
+        .arg(&url)
         .status()
         .map_err(|error| error.to_string())?;
     status
@@ -1833,7 +1962,7 @@ async fn offer_update(
 
     let version = update.version.clone();
     append_log(state, &format!("Showing update prompt for {version}"));
-    let Some(update_dialog) = UpdateDialog::prompt(&version) else {
+    let Some(update_dialog) = UpdateDialog::prompt(app, &version) else {
         append_log(state, &format!("Update {version} deferred by user"));
         finish_update_flow(state, check_update, quit);
         return;
@@ -1903,6 +2032,18 @@ fn main() {
                 .map(PathBuf::from)
                 .ok_or_else(|| std::io::Error::other("LOCALAPPDATA is unavailable"))?
                 .join("Codex Taskboard/Logs");
+            #[cfg(target_os = "linux")]
+            let data_directory = std::env::var_os("XDG_DATA_HOME")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home_directory.join(".local/share"))
+                .join("Codex Taskboard");
+            #[cfg(target_os = "linux")]
+            let log_directory = std::env::var_os("XDG_STATE_HOME")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home_directory.join(".local/state"))
+                .join("Codex Taskboard");
             fs::create_dir_all(&data_directory)?;
             fs::create_dir_all(&log_directory)?;
             let Some(instance_lock) = acquire_instance_lock(&data_directory.join("launcher.lock"))?
@@ -2190,7 +2331,7 @@ fn main() {
         tauri::RunEvent::Exit => {
             if let Some(state) = app_handle.try_state::<Arc<LauncherState>>() {
                 stop_managed_child(app_handle, &state);
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
                 unsafe {
                     libc::flock(state._instance_lock.as_raw_fd(), libc::LOCK_UN);
                 }
