@@ -7,6 +7,8 @@ import type {
   TopicQuestion,
   TopicQuestionStatus,
   ResearchStatus,
+  ResearchRecord,
+  ResearchRecordDraft,
 } from "./researchTypes";
 
 export async function listTopics(signal?: AbortSignal): Promise<Topic[]> {
@@ -131,4 +133,58 @@ export async function unlinkTopicTask(topicId: string, taskId: string): Promise<
     `/api/research/topics/${encodeURIComponent(topicId)}/tasks/${encodeURIComponent(taskId)}`,
     { method: "DELETE" },
   );
+}
+
+export async function listResearchRecords(
+  topicId: string,
+  signal?: AbortSignal,
+): Promise<ResearchRecord[]> {
+  const data = await request<{ records: ResearchRecord[] }>(
+    `/api/research/topics/${encodeURIComponent(topicId)}/records`,
+    { signal },
+  );
+  return data.records;
+}
+
+export async function getResearchRecord(
+  recordId: string,
+  signal?: AbortSignal,
+): Promise<ResearchRecord> {
+  const data = await request<{ record: ResearchRecord }>(
+    `/api/research/records/${encodeURIComponent(recordId)}`,
+    { signal },
+  );
+  return data.record;
+}
+
+export async function createResearchRecord(
+  topicId: string,
+  input: ResearchRecordDraft,
+): Promise<ResearchRecord> {
+  const data = await request<{ record: ResearchRecord }>(
+    `/api/research/topics/${encodeURIComponent(topicId)}/records`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+  return data.record;
+}
+
+export async function updateResearchRecord(
+  record: ResearchRecord,
+  changes: Partial<ResearchRecordDraft>,
+): Promise<ResearchRecord> {
+  const data = await request<{ record: ResearchRecord }>(
+    `/api/research/records/${encodeURIComponent(record.id)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ version: record.version, ...changes }),
+    },
+  );
+  return data.record;
+}
+
+export async function deleteResearchRecord(record: ResearchRecord): Promise<void> {
+  await request(`/api/research/records/${encodeURIComponent(record.id)}`, {
+    method: "DELETE",
+    body: JSON.stringify({ version: record.version }),
+  });
 }

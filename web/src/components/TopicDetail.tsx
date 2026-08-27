@@ -17,6 +17,7 @@ import {
 import type { Task } from "../types";
 import { confidenceLabel, researchStatusLabel } from "./TopicEditor";
 import { TopicQuestionList } from "./TopicQuestionList";
+import { ResearchRecordSection } from "./ResearchRecordSection";
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -233,6 +234,8 @@ export function TopicDetail({
           </div>
         )}
       </section>
+
+      <ResearchRecordSection topicId={topic.id} />
     </section>
   );
 }

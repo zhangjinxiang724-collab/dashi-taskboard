@@ -52,6 +52,27 @@ function taskFromRow(row) {
   };
 }
 
+function researchRecordFromRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    topicId: row.primary_topic_id,
+    title: row.title,
+    provider: row.provider,
+    kind: row.kind,
+    url: row.url,
+    externalId: row.external_id,
+    summary: row.summary,
+    note: row.note,
+    occurredAt: row.occurred_at,
+    captureAdapter: row.capture_adapter,
+    version: row.version,
+    deletedAt: row.deleted_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export class ResearchDatabase {
   constructor(database, { databasePath } = {}) {
     this.database = database;
@@ -305,6 +326,152 @@ export class ResearchDatabase {
       this.database.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  listResearchRecords(topicId) {
+    if (!this.database.prepare("SELECT 1 FROM topics WHERE id = ?").get(topicId)) {
+      return { kind: "topic_not_found" };
+    }
+    const records = this.database.prepare(`
+      SELECT * FROM research_records
+      WHERE primary_topic_id = ? AND deleted_at IS NULL
+      ORDER BY occurred_at DESC, created_at DESC, id DESC
+    `).all(topicId).map(researchRecordFromRow);
+    return { kind: "found", records };
+  }
+
+  getResearchRecord(id, { includeDeleted = false } = {}) {
+    return researchRecordFromRow(this.database.prepare(`
+      SELECT * FROM research_records
+      WHERE id = ? ${includeDeleted ? "" : "AND deleted_at IS NULL"}
+    `).get(id));
+  }
+
+  createResearchRecord(topicId, input) {
+    if (!this.database.prepare("SELECT 1 FROM topics WHERE id = ?").get(topicId)) {
+      return { kind: "topic_not_found" };
+    }
+    const timestamp = now();
+    const record = {
+      id: randomUUID(),
+      topicId,
+      title: input.title,
+      provider: input.provider,
+      kind: input.kind,
+      url: input.url,
+      externalId: input.externalId,
+      summary: input.summary,
+      note: input.note,
+      occurredAt: input.occurredAt,
+      captureAdapter: "manual-v1",
+      version: 1,
+      deletedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    this.database.prepare(`
+      INSERT INTO research_records (
+        id, primary_topic_id, title, provider, kind, url, external_id,
+        summary, note, occurred_at, capture_adapter, version, deleted_at,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      record.id,
+      record.topicId,
+      record.title,
+      record.provider,
+      record.kind,
+      record.url,
+      record.externalId,
+      record.summary,
+      record.note,
+      record.occurredAt,
+      record.captureAdapter,
+      record.version,
+      record.deletedAt,
+      record.createdAt,
+      record.updatedAt,
+    );
+    return { kind: "created", record };
+  }
+
+  updateResearchRecord(id, input) {
+    const current = this.getResearchRecord(id);
+    if (!current) return { kind: "not_found" };
+    if (current.version !== input.version) {
+      return { kind: "conflict", currentVersion: current.version };
+    }
+    const next = {
+      ...current,
+      ...input.changes,
+      version: current.version + 1,
+      updatedAt: now(),
+    };
+    const result = this.database.prepare(`
+      UPDATE research_records
+      SET title = ?, provider = ?, kind = ?, url = ?, external_id = ?,
+          summary = ?, note = ?, occurred_at = ?, version = ?, updated_at = ?
+      WHERE id = ? AND version = ? AND deleted_at IS NULL
+    `).run(
+      next.title,
+      next.provider,
+      next.kind,
+      next.url,
+      next.externalId,
+      next.summary,
+      next.note,
+      next.occurredAt,
+      next.version,
+      next.updatedAt,
+      id,
+      input.version,
+    );
+    if (result.changes === 0) {
+      const latest = this.getResearchRecord(id);
+      return latest
+        ? { kind: "conflict", currentVersion: latest.version }
+        : { kind: "not_found" };
+    }
+    return { kind: "updated", record: this.getResearchRecord(id) };
+  }
+
+  deleteResearchRecord(id, version) {
+    const current = this.getResearchRecord(id);
+    if (!current) return { kind: "not_found" };
+    if (current.version !== version) {
+      return { kind: "conflict", currentVersion: current.version };
+    }
+    const timestamp = now();
+    const result = this.database.prepare(`
+      UPDATE research_records
+      SET deleted_at = ?, updated_at = ?, version = version + 1
+      WHERE id = ? AND version = ? AND deleted_at IS NULL
+    `).run(timestamp, timestamp, id, version);
+    if (result.changes === 0) {
+      const latest = this.getResearchRecord(id);
+      return latest
+        ? { kind: "conflict", currentVersion: latest.version }
+        : { kind: "not_found" };
+    }
+    return { kind: "deleted" };
+  }
+
+  linkResearchRecordTask(recordId, taskId) {
+    if (!this.getResearchRecord(recordId)) return { kind: "record_not_found" };
+    if (!this.database.prepare("SELECT 1 FROM tasks WHERE id = ?").get(taskId)) {
+      return { kind: "task_not_found" };
+    }
+    const result = this.database.prepare(`
+      INSERT OR IGNORE INTO research_record_tasks (record_id, task_id, created_at)
+      VALUES (?, ?, ?)
+    `).run(recordId, taskId, now());
+    return result.changes > 0 ? { kind: "linked" } : { kind: "already_linked" };
+  }
+
+  unlinkResearchRecordTask(recordId, taskId) {
+    return this.database.prepare(`
+      DELETE FROM research_record_tasks WHERE record_id = ? AND task_id = ?
+    `).run(recordId, taskId).changes > 0;
   }
 
   linkTask(topicId, taskId) {

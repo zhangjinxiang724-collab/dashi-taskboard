@@ -1,5 +1,7 @@
 import {
   isConfidenceLevel,
+  isResearchRecordKind,
+  isResearchRecordProvider,
   isResearchStatus,
   isTopicQuestionStatus,
 } from "../shared/research-domain.mjs";
@@ -10,6 +12,8 @@ const TOPIC_QUESTIONS_PATH = /^\/api\/research\/topics\/([^/]+)\/questions$/;
 const TOPIC_QUESTION_PATH = /^\/api\/research\/topics\/([^/]+)\/questions\/([^/]+)$/;
 const TOPIC_QUESTION_MOVE_PATH = /^\/api\/research\/topics\/([^/]+)\/questions\/([^/]+)\/move$/;
 const TOPIC_TASK_PATH = /^\/api\/research\/topics\/([^/]+)\/tasks\/([^/]+)$/;
+const TOPIC_RECORDS_PATH = /^\/api\/research\/topics\/([^/]+)\/records$/;
+const RESEARCH_RECORD_PATH = /^\/api\/research\/records\/([^/]+)$/;
 
 function assertPlainObject(value, ApiError) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -60,6 +64,95 @@ function positiveVersion(value, ApiError) {
     throw new ApiError(400, "INVALID_FIELD", "version must be a positive integer");
   }
   return value;
+}
+
+function nullableText(value, field, ApiError, { maxLength = 20_000 } = {}) {
+  if (value === undefined || value === null || value === "") return null;
+  return text(value, field, ApiError, { maxLength }) || null;
+}
+
+function occurredAt(value, ApiError) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new ApiError(400, "INVALID_FIELD", "occurredAt is required");
+  }
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    throw new ApiError(400, "INVALID_FIELD", "occurredAt must be a valid date and time");
+  }
+  return new Date(timestamp).toISOString();
+}
+
+function externalUrl(value, ApiError) {
+  const candidate = nullableText(value, "url", ApiError, { maxLength: 4_000 });
+  if (candidate === null) return null;
+  let parsed;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    throw new ApiError(400, "INVALID_FIELD", "url must be a valid http or https URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new ApiError(400, "INVALID_FIELD", "url must use http or https");
+  }
+  return parsed.toString();
+}
+
+function researchRecordProvider(value, ApiError) {
+  if (!isResearchRecordProvider(value)) {
+    throw new ApiError(400, "INVALID_FIELD", "provider is not supported");
+  }
+  return value;
+}
+
+function researchRecordKind(value, ApiError) {
+  if (!isResearchRecordKind(value)) {
+    throw new ApiError(400, "INVALID_FIELD", "kind is not supported");
+  }
+  return value;
+}
+
+const RESEARCH_RECORD_FIELDS = new Set([
+  "title", "provider", "kind", "url", "externalId", "summary", "note", "occurredAt",
+]);
+
+function parseResearchRecordCreate(body, ApiError) {
+  assertPlainObject(body, ApiError);
+  assertAllowedKeys(body, RESEARCH_RECORD_FIELDS, ApiError);
+  return {
+    title: text(body.title, "title", ApiError, { required: true, maxLength: 300 }),
+    provider: researchRecordProvider(body.provider, ApiError),
+    kind: researchRecordKind(body.kind, ApiError),
+    url: externalUrl(body.url, ApiError),
+    externalId: nullableText(body.externalId, "externalId", ApiError, { maxLength: 1_000 }),
+    summary: text(body.summary, "summary", ApiError),
+    note: text(body.note, "note", ApiError),
+    occurredAt: occurredAt(body.occurredAt, ApiError),
+  };
+}
+
+function parseResearchRecordUpdate(body, ApiError) {
+  assertPlainObject(body, ApiError);
+  assertAllowedKeys(body, new Set(["version", ...RESEARCH_RECORD_FIELDS]), ApiError);
+  const version = positiveVersion(body.version, ApiError);
+  const changes = {};
+  if (body.title !== undefined) {
+    changes.title = text(body.title, "title", ApiError, { required: true, maxLength: 300 });
+  }
+  if (body.provider !== undefined) {
+    changes.provider = researchRecordProvider(body.provider, ApiError);
+  }
+  if (body.kind !== undefined) changes.kind = researchRecordKind(body.kind, ApiError);
+  if (body.url !== undefined) changes.url = externalUrl(body.url, ApiError);
+  if (body.externalId !== undefined) {
+    changes.externalId = nullableText(body.externalId, "externalId", ApiError, { maxLength: 1_000 });
+  }
+  if (body.summary !== undefined) changes.summary = text(body.summary, "summary", ApiError);
+  if (body.note !== undefined) changes.note = text(body.note, "note", ApiError);
+  if (body.occurredAt !== undefined) changes.occurredAt = occurredAt(body.occurredAt, ApiError);
+  if (Object.keys(changes).length === 0) {
+    throw new ApiError(400, "INVALID_BODY", "At least one research record field must be changed");
+  }
+  return { version, changes };
 }
 
 function parseCreate(body, ApiError) {
@@ -190,6 +283,21 @@ function questionResult(result, ApiError) {
   return result.topic;
 }
 
+function researchRecordResult(result, ApiError) {
+  if (result.kind === "not_found") {
+    throw new ApiError(404, "RESEARCH_RECORD_NOT_FOUND", "Research record not found");
+  }
+  if (result.kind === "conflict") {
+    throw new ApiError(
+      409,
+      "RESEARCH_RECORD_VERSION_CONFLICT",
+      "Research record was changed by another request",
+      { currentVersion: result.currentVersion },
+    );
+  }
+  return result.record;
+}
+
 export async function handleResearchRequest({
   request,
   response,
@@ -218,6 +326,69 @@ export async function handleResearchRequest({
       return true;
     }
     methodNotAllowed(response, ["GET", "POST"]);
+    return true;
+  }
+
+  const recordsMatch = pathname.match(TOPIC_RECORDS_PATH);
+  if (recordsMatch) {
+    const topicId = decodeURIComponent(recordsMatch[1]);
+    if (request.method === "GET") {
+      const result = research.listResearchRecords(topicId);
+      if (result.kind === "topic_not_found") {
+        throw new ApiError(404, "TOPIC_NOT_FOUND", "Topic not found");
+      }
+      sendJson(response, 200, { records: result.records });
+      return true;
+    }
+    if (request.method === "POST") {
+      const result = research.createResearchRecord(
+        topicId,
+        parseResearchRecordCreate(await readJson(request), ApiError),
+      );
+      if (result.kind === "topic_not_found") {
+        throw new ApiError(404, "TOPIC_NOT_FOUND", "Topic not found");
+      }
+      sendJson(response, 201, { record: result.record });
+      return true;
+    }
+    methodNotAllowed(response, ["GET", "POST"]);
+    return true;
+  }
+
+  const researchRecordMatch = pathname.match(RESEARCH_RECORD_PATH);
+  if (researchRecordMatch) {
+    const recordId = decodeURIComponent(researchRecordMatch[1]);
+    if (request.method === "GET") {
+      const record = research.getResearchRecord(recordId);
+      if (!record) {
+        throw new ApiError(404, "RESEARCH_RECORD_NOT_FOUND", "Research record not found");
+      }
+      sendJson(response, 200, { record });
+      return true;
+    }
+    if (request.method === "PATCH") {
+      const record = researchRecordResult(
+        research.updateResearchRecord(
+          recordId,
+          parseResearchRecordUpdate(await readJson(request), ApiError),
+        ),
+        ApiError,
+      );
+      sendJson(response, 200, { record });
+      return true;
+    }
+    if (request.method === "DELETE") {
+      researchRecordResult(
+        research.deleteResearchRecord(
+          recordId,
+          parseVersionOnly(await readJson(request), ApiError),
+        ),
+        ApiError,
+      );
+      sendEmpty(response, 204);
+      return true;
+    }
+    methodNotAllowed(response, ["GET", "PATCH", "DELETE"]);
     return true;
   }
 

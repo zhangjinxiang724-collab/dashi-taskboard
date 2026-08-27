@@ -457,7 +457,8 @@
 
 .research-reading-section,
 .research-questions-panel,
-.research-tasks-panel {
+.research-tasks-panel,
+.research-records-panel {
   padding-block: 21px;
 }
 
@@ -476,7 +477,8 @@
       "current current"
       "focus focus"
       "questions tracking"
-      "questions tasks";
+      "questions tasks"
+      "records records";
     grid-template-columns: minmax(0, 1.12fr) minmax(260px, 0.88fr);
     column-gap: 24px;
     width: min(980px, calc(100% - 56px));
@@ -489,6 +491,7 @@
   .research-questions-panel { grid-area: questions; align-self: start; }
   .research-tracking-section { grid-area: tracking; align-self: start; }
   .research-tasks-panel { grid-area: tasks; align-self: start; }
+  .research-records-panel { grid-area: records; align-self: start; }
   .research-focus-grid { column-gap: 22px; }
 }
 
@@ -729,8 +732,77 @@
 
 .research-reading-section,
 .research-questions-panel,
-.research-tasks-panel {
+.research-tasks-panel,
+.research-records-panel {
   border-top-color: color-mix(in srgb, var(--qw-color-border) 58%, transparent);
+}
+
+/* Phase 3: research records remain a quiet chronological index, not a chat UI. */
+.research-records-panel {
+  padding-block: 24px;
+  border-top: var(--qw-border-width) solid color-mix(in srgb, var(--qw-color-border) 58%, transparent);
+}
+
+.research-records-heading { align-items: end; }
+.research-record-list { border-top: var(--qw-border-width) solid var(--qw-color-border); }
+.research-record-row {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr) auto;
+  gap: 18px;
+  padding-block: 18px;
+  border-bottom: var(--qw-border-width) solid var(--qw-color-border);
+}
+
+.research-record-row > time {
+  padding-top: 3px;
+  color: var(--qw-color-text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.research-record-meta { display: flex; gap: 7px; margin-bottom: 5px; }
+.research-record-meta span {
+  color: var(--qw-color-text-muted);
+  font-size: 10px;
+}
+.research-record-meta span + span::before { margin-right: 7px; content: "·"; }
+.research-record-main h3 { margin: 0; font-size: 14px; font-weight: 620; line-height: 1.45; }
+.research-record-main p {
+  max-width: 680px;
+  margin: 7px 0 0;
+  color: var(--qw-color-text-muted);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+.research-record-main .research-record-note { color: var(--qw-color-text-faint); }
+.research-record-actions { display: flex; align-items: flex-start; gap: 10px; white-space: nowrap; }
+.research-record-actions a,
+.research-record-actions button {
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: var(--qw-color-text-muted);
+  font: inherit;
+  font-size: 11px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.research-record-actions a { color: var(--qw-color-accent); }
+.research-record-actions a:hover,
+.research-record-actions button:hover { color: var(--qw-color-text); }
+.research-records-empty { padding: 16px 0 4px; color: var(--qw-color-text-muted); font-size: 12px; }
+.research-records-empty p { margin: 0 0 12px; }
+
+.research-record-form { width: min(620px, 100%); }
+.research-record-advanced { margin: 0 18px 18px; color: var(--qw-color-text-muted); font-size: 11px; }
+.research-record-advanced summary { margin-bottom: 10px; cursor: pointer; }
+.research-record-advanced label { display: flex; flex-direction: column; gap: 6px; }
+
+@media (max-width: 720px) {
+  .research-record-row { grid-template-columns: 1fr; gap: 7px; }
+  .research-record-row > time { padding-top: 0; }
+  .research-record-actions { margin-top: 4px; }
 }
 
 .research-focus-grid { gap: 20px; }

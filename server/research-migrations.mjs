@@ -1,5 +1,4 @@
-import { mkdirSync } from "node:fs";
-import path from "node:path";
+import { createConsistentDatabaseBackup } from "./database-backup.mjs";
 
 const RESEARCH_MIGRATIONS = [
   {
@@ -66,6 +65,42 @@ const RESEARCH_MIGRATIONS = [
       `);
     },
   },
+  {
+    version: "003_research_records",
+    up(database) {
+      database.exec(`
+        CREATE TABLE research_records (
+          id TEXT PRIMARY KEY,
+          primary_topic_id TEXT REFERENCES topics(id) ON DELETE SET NULL,
+          title TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          url TEXT,
+          external_id TEXT,
+          summary TEXT NOT NULL DEFAULT '',
+          note TEXT NOT NULL DEFAULT '',
+          occurred_at TEXT NOT NULL,
+          capture_adapter TEXT NOT NULL DEFAULT 'manual-v1',
+          version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+          deleted_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE research_record_tasks (
+          record_id TEXT NOT NULL REFERENCES research_records(id) ON DELETE CASCADE,
+          task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (record_id, task_id)
+        );
+
+        CREATE INDEX research_records_topic_occurred
+          ON research_records(primary_topic_id, occurred_at DESC, id);
+        CREATE INDEX research_records_provider_external
+          ON research_records(provider, external_id);
+      `);
+    },
+  },
 ];
 
 function appliedVersions(database) {
@@ -79,25 +114,17 @@ function appliedVersions(database) {
   `).all().map((row) => row.version));
 }
 
-function createMigrationBackup(database, databasePath, nextVersion) {
-  if (!databasePath || databasePath === ":memory:") return null;
-  const backupDirectory = path.join(path.dirname(databasePath), "backups");
-  mkdirSync(backupDirectory, { recursive: true });
-  const timestamp = new Date().toISOString().replace(/[^0-9]/g, "");
-  const backupPath = path.join(
-    backupDirectory,
-    `${path.basename(databasePath)}.before-research-${nextVersion}-${timestamp}-${process.pid}.sqlite`,
-  );
-  database.prepare("VACUUM INTO ?").run(backupPath);
-  return backupPath;
-}
-
 export function applyResearchMigrations(database, { databasePath } = {}) {
   const applied = appliedVersions(database);
   const pending = RESEARCH_MIGRATIONS.filter((migration) => !applied.has(migration.version));
   if (pending.length === 0) return { backupPath: null, applied: [] };
 
-  const backupPath = createMigrationBackup(database, databasePath, pending[0].version);
+  const backupPath = databasePath && databasePath !== ":memory:"
+    ? createConsistentDatabaseBackup(database, {
+      databasePath,
+      label: `before-research-${pending[0].version}`,
+    })
+    : null;
   database.exec("BEGIN IMMEDIATE");
   try {
     database.exec(`

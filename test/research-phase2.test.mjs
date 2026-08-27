@@ -230,7 +230,10 @@ test("Phase 2 migration backs up and preserves Phase 1 Topic data", async () => 
 
   try {
     const research = new ResearchDatabase(database, { databasePath });
-    assert.deepEqual(research.migrationResult.applied, ["002_topic_current_state"]);
+    assert.deepEqual(research.migrationResult.applied, [
+      "002_topic_current_state",
+      "003_research_records",
+    ]);
     assert.ok(research.migrationResult.backupPath);
     await access(research.migrationResult.backupPath);
 
@@ -243,7 +246,7 @@ test("Phase 2 migration backs up and preserves Phase 1 Topic data", async () => 
     assert.deepEqual(
       database.prepare("SELECT version FROM research_schema_migrations ORDER BY version").all()
         .map((row) => row.version),
-      ["001_topic_task_core", "002_topic_current_state"],
+      ["001_topic_task_core", "002_topic_current_state", "003_research_records"],
     );
     assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
 
