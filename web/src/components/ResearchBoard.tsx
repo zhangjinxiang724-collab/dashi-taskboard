@@ -7,12 +7,10 @@ import {
   createTopic,
   getTopic,
   listTopics,
-  moveTopic,
   updateTopic,
 } from "../researchApi";
 import {
   RESEARCH_STATUSES,
-  type ResearchStatus,
   type ResearchTaskSummary,
   type Topic,
   type TopicDetail as TopicDetailType,
@@ -47,7 +45,6 @@ export function ResearchBoard({
   const [editorTopic, setEditorTopic] = useState<Topic | null | undefined>(undefined);
   const [saving, setSaving] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
-  const [draggedTopicId, setDraggedTopicId] = useState<string | null>(null);
 
   const reload = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -116,17 +113,6 @@ export function ResearchBoard({
     }
   }
 
-  async function changeStatus(topic: Topic, status: ResearchStatus) {
-    if (topic.status === status) return;
-    setError(null);
-    try {
-      replaceTopic(await moveTopic(topic, status));
-    } catch (moveError) {
-      setError(message(moveError));
-      await reload();
-    }
-  }
-
   if (selectedTopic) {
     return (
       <>
@@ -154,40 +140,52 @@ export function ResearchBoard({
   return (
     <section className="research-board">
       <div className="research-board-heading">
-        <div><span className="research-eyebrow">Research OS</span><h1>{text("研究看板", "Research Board")}</h1><p>{text("管理长期认知状态。具体执行仍由 Task Board 负责。", "Manage long-running research state while Task Board handles execution.")}</p></div>
-        <button className="button primary" type="button" onClick={() => setEditorTopic(null)}>＋ {text("新建 Topic", "New Topic")}</button>
+        <div>
+          <h1>{text("研究", "Research")}</h1>
+          <p>{text("管理那些需要长期思考和持续跟踪的主题。", "Manage topics that need long-term thinking and continued attention.")}</p>
+        </div>
+        <button className="button primary" type="button" onClick={() => setEditorTopic(null)}>＋ {text("新建主题", "New topic")}</button>
       </div>
       {error && <div className="research-error" role="alert">{error}</div>}
       {loading ? <div className="research-loading">{text("正在读取研究主题…", "Loading research topics…")}</div> : (
-        <div className="research-columns">
+        <div className="research-topic-groups">
           {RESEARCH_STATUSES.map((status) => {
-            const columnTopics = topics.filter((topic) => topic.status === status);
+            const statusTopics = topics.filter((topic) => topic.status === status);
             return (
-              <section key={status} className={`research-column status-${status}`} onDragOver={(event) => event.preventDefault()} onDrop={() => {
-                const topic = topics.find((candidate) => candidate.id === draggedTopicId);
-                setDraggedTopicId(null);
-                if (topic) void changeStatus(topic, status);
-              }}>
-                <header><span className="research-status-dot" /><h2>{researchStatusLabel(status, text)}</h2><span>{columnTopics.length}</span></header>
-                <div className="research-column-body">
-                  {columnTopics.map((topic) => (
-                    <article key={topic.id} className="research-card" draggable onDragStart={() => setDraggedTopicId(topic.id)} onDragEnd={() => setDraggedTopicId(null)} onClick={() => void openTopic(topic.id)}>
-                      <div className="research-card-heading">
-                        <h3>{topic.title}</h3>
-                        <span className={topic.confidenceLevel ? `confidence-${topic.confidenceLevel}` : ""}>
-                          {confidenceLabel(topic.confidenceLevel, text)}
+              <section key={status} className={`research-topic-group status-${status}`}>
+                <header>
+                  <h2>{researchStatusLabel(status, text)}</h2>
+                  <span>{statusTopics.length}</span>
+                </header>
+                <div className="research-topic-list">
+                  {statusTopics.map((topic) => (
+                    <button key={topic.id} className="research-topic-row" type="button" onClick={() => void openTopic(topic.id)}>
+                      <span className="research-topic-primary">
+                        <span className="research-topic-title-line">
+                          <strong>{topic.title}</strong>
+                          <span className={`research-status-badge status-${topic.status}`}>{researchStatusLabel(topic.status, text)}</span>
                         </span>
-                      </div>
-                      {topic.currentView && <p>{topic.currentView}</p>}
-                      {topic.nextAction && <div className="research-card-next"><span>{text("下一步", "Next")}</span>{topic.nextAction}</div>}
-                      <div className="research-card-metrics">
-                        <span>{topic.openQuestionCount} {text("个未解决", "open")}</span>
-                        <span>{researchAge(topic.lastResearchedAt, text)}</span>
-                      </div>
-                      <div className="research-labels">{topic.labels.map((label) => <span key={label}>{label}</span>)}</div>
-                    </article>
+                        <span className="research-topic-summary">
+                          {topic.currentView || text("当前还没有形成明确观点。", "No clear current view yet.")}
+                        </span>
+                      </span>
+                      <span className="research-topic-confidence">
+                        {confidenceLabel(topic.confidenceLevel, text)}
+                      </span>
+                      <span className="research-topic-open-count">
+                        {topic.openQuestionCount} {text("个未解决问题", "open questions")}
+                      </span>
+                      <span className="research-topic-age">{researchAge(topic.lastResearchedAt, text)}</span>
+                      <span className="research-topic-next">
+                        <small>{text("下一步", "Next")}</small>
+                        {topic.nextAction || text("还没有安排下一步", "No next action yet")}
+                      </span>
+                      <span className="research-topic-chevron" aria-hidden="true">›</span>
+                    </button>
                   ))}
-                  {columnTopics.length === 0 && <div className="research-column-empty">{text("暂无主题", "No topics")}</div>}
+                  {statusTopics.length === 0 && (
+                    <div className="research-group-empty">{text("这个阶段暂时没有主题。", "No topics in this stage yet.")}</div>
+                  )}
                 </div>
               </section>
             );

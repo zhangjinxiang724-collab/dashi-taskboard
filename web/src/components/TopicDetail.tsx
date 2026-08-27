@@ -140,62 +140,73 @@ export function TopicDetail({
   return (
     <section className="research-detail">
       <div className="research-detail-toolbar">
-        <button className="button" type="button" onClick={onBack}>← {text("返回研究看板", "Back to Research Board")}</button>
-        <button className="button primary" type="button" onClick={onEdit}>{text("编辑当前认知", "Edit current state")}</button>
+        <button className="research-back-link" type="button" onClick={onBack}>← {text("返回研究", "Back to Research")}</button>
+        <button className="button" type="button" onClick={onEdit}>{text("编辑主题", "Edit topic")}</button>
       </div>
       {error && <div className="research-error" role="alert">{error}</div>}
 
       <div className="research-detail-heading">
-        <div>
-          <span className="research-eyebrow">{researchStatusLabel(topic.status, text)}</span>
-          <h1>{topic.title}</h1>
-          <div className="research-labels">{topic.labels.map((label) => <span key={label}>{label}</span>)}</div>
+        <h1>{topic.title}</h1>
+        <div className="research-topic-meta">
+          <label className="research-status-control">
+            <span className="sr-only">{text("研究状态", "Research status")}</span>
+            <select disabled={pending} value={topic.status} onChange={(event) => void changeStatus(event.target.value as ResearchStatus)}>
+              {RESEARCH_STATUSES.map((status) => <option key={status} value={status}>{researchStatusLabel(status, text)}</option>)}
+            </select>
+          </label>
+          <span className={`research-meta-badge ${topic.confidenceLevel ? `confidence-${topic.confidenceLevel}` : ""}`}>
+            {confidenceLabel(topic.confidenceLevel, text)}
+          </span>
+          <span className="research-meta-date">{ageLabel}</span>
         </div>
-        <label className="research-status-control">
-          <span>{text("研究状态", "Research status")}</span>
-          <select disabled={pending} value={topic.status} onChange={(event) => void changeStatus(event.target.value as ResearchStatus)}>
-            {RESEARCH_STATUSES.map((status) => <option key={status} value={status}>{researchStatusLabel(status, text)}</option>)}
-          </select>
-        </label>
+        {topic.labels.length > 0 && <div className="research-labels">{topic.labels.map((label) => <span key={label}>{label}</span>)}</div>}
       </div>
 
-      <section className="research-current-state">
-        <div>
-          <span className="research-panel-label">{text("当前观点", "Current View")}</span>
-          <p>{topic.currentView || text("尚未形成当前观点", "No current view yet")}</p>
+      <section className="research-reading-section research-current-state">
+        <div className="research-reading-heading">
+          <h2>{text("当前观点", "Current View")}</h2>
+          <button className="research-inline-action" type="button" onClick={onEdit}>{text("编辑", "Edit")}</button>
         </div>
-        <aside>
-          <span>{text("置信度", "Confidence")}</span>
-          <strong className={topic.confidenceLevel ? `confidence-${topic.confidenceLevel}` : ""}>
-            {confidenceLabel(topic.confidenceLevel, text)}
-          </strong>
-        </aside>
+        {topic.currentView ? (
+          <p>{topic.currentView}</p>
+        ) : (
+          <div className="research-friendly-empty">
+            <p>{text("当前还没有形成明确观点。研究一段时间后，把现在最核心的判断留在这里。", "No clear view has formed yet. Leave your most important current judgment here after some research.")}</p>
+            <button className="button" type="button" onClick={onEdit}>{text("添加当前观点", "Add current view")}</button>
+          </div>
+        )}
       </section>
 
-      <div className="research-detail-grid research-context-grid">
-        <article>
-          <h2>{text("核心问题", "Core Question")}</h2>
-          <p>{topic.coreQuestion || text("尚未填写", "Not added yet")}</p>
-        </article>
-        <article>
-          <h2>{text("下一步行动", "Next Action")}</h2>
-          <p>{topic.nextAction || text("尚未填写", "Not added yet")}</p>
-        </article>
-        <article>
-          <h2>{text("重新研究触发条件", "Review Trigger")}</h2>
-          <p>{topic.reviewTrigger || text("尚未填写", "Not added yet")}</p>
-        </article>
-        <article className="research-last-researched">
-          <h2>{text("最后研究时间", "Last Researched")}</h2>
-          <strong>{ageLabel}</strong>
-          {topic.lastResearchedAt && <time dateTime={topic.lastResearchedAt}>{formattedDate(topic.lastResearchedAt)}</time>}
-          <button className="button" type="button" disabled={pending} onClick={() => void markResearched()}>
-            {text("标记今天已研究", "Mark researched today")}
-          </button>
-        </article>
+      <div className="research-focus-grid">
+        <section className="research-reading-section research-core-question">
+          <div className="research-reading-heading"><h2>{text("核心问题", "Core Question")}</h2></div>
+          <p>{topic.coreQuestion || text("还没有写下这个主题最需要回答的问题。", "The central question for this topic has not been written yet.")}</p>
+        </section>
+        <section className="research-reading-section research-next-action">
+          <div className="research-reading-heading"><h2>{text("下一步", "Next Action")}</h2></div>
+          <p>{topic.nextAction || text("还没有安排下一步。可以从一个最小、可验证的问题开始。", "No next step yet. Start with one small, verifiable question.")}</p>
+        </section>
       </div>
 
       <TopicQuestionList topic={topic} onChange={onChange} />
+
+      <section className="research-reading-section research-tracking-section">
+        <div className="research-reading-heading"><h2>{text("跟踪", "Tracking")}</h2></div>
+        <div className="research-tracking-grid">
+          <div>
+            <span>{text("重新研究触发条件", "Review Trigger")}</span>
+            <p>{topic.reviewTrigger || text("还没有设置需要重新研究的触发事件。", "No review trigger has been set yet.")}</p>
+          </div>
+          <div className="research-last-researched">
+            <span>{text("最后研究", "Last Researched")}</span>
+            <strong>{ageLabel}</strong>
+            {topic.lastResearchedAt && <time dateTime={topic.lastResearchedAt}>{formattedDate(topic.lastResearchedAt)}</time>}
+            <button className="button" type="button" disabled={pending} onClick={() => void markResearched()}>
+              {text("标记今天已研究", "Mark researched today")}
+            </button>
+          </div>
+        </div>
+      </section>
 
       <section className="research-tasks-panel">
         <div className="research-section-heading">

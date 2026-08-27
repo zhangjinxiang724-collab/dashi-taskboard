@@ -76,6 +76,7 @@ import {
   RefreshIcon,
   RelationIcon,
 } from "./components/SemanticIcons";
+import { QuietWorkspaceSidebar } from "./components/QuietWorkspaceSidebar";
 import { ProjectAutomationMenu } from "./components/ProjectAutomationMenu";
 import { TaskboardIcon } from "./components/TaskboardIcon";
 import { TaskContextMenu } from "./components/TaskContextMenu";
@@ -687,7 +688,9 @@ export function App() {
   const embedded = host === "codex" || host === "workbuddy" || host === "deepseek-harness";
   const undoShortcut = navigator.userAgent.includes("Macintosh") ? "⌘Z" : "Ctrl+Z";
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
-  const [workspaceMode, setWorkspaceMode] = useState<"tasks" | "research">("tasks");
+  const [workspaceMode, setWorkspaceMode] = useState<"tasks" | "research">(
+    () => readIssueIdentifier(window.location.search) ? "tasks" : "research",
+  );
   const [hostContext, setHostContext] = useState<HostContext | null>(null);
   const language = resolveTaskboardLanguage(
     hostContext?.language ?? query.get("lang") ?? navigator.language,
@@ -3262,7 +3265,7 @@ export function App() {
 
   return (
     <TaskboardLanguageProvider language={language}>
-      <div className={`app-shell${embedded ? " embedded" : ""}`} style={appShellStyle}>
+      <div className={`app-shell mode-${workspaceMode}${embedded ? " embedded" : ""}`} style={appShellStyle}>
       {taskboardMetadata && taskboardMetadata.mode !== "cloud" && (
         <LocalRealtimeSync
           selectedProjectId={taskScopeProjectId}
@@ -3273,6 +3276,13 @@ export function App() {
           setCommentsRevision={setCommentsRevision}
           setAttachmentsRevision={setAttachmentsRevision}
           setReadmeRevision={setReadmeRevision}
+        />
+      )}
+      {!embedded && (
+        <QuietWorkspaceSidebar
+          mode={workspaceMode}
+          onShowResearch={showResearchBoard}
+          onShowTasks={showTaskBoard}
         />
       )}
       <main className="workspace">
@@ -3305,6 +3315,9 @@ export function App() {
                 <button className={workspaceMode === "tasks" ? "active" : ""} type="button" aria-pressed={workspaceMode === "tasks"} onClick={showTaskBoard}>Task Board</button>
                 <button className={workspaceMode === "research" ? "active" : ""} type="button" aria-pressed={workspaceMode === "research"} onClick={showResearchBoard}>Research Board</button>
               </nav>
+              <span className="quiet-workspace-page-title">
+                {workspaceMode === "research" ? text("研究", "Research") : text("任务", "Tasks")}
+              </span>
               {workspaceMode === "tasks" && <div className="header-project-switcher" data-project-switcher>
                 <button
                   className="header-project-button"
@@ -3431,12 +3444,13 @@ export function App() {
                 title={text("新建议题 (C)", "Create issue (C)")}
               >
                 <PlusIcon color="currentColor" size={14} />
+                <span>{text("新建任务", "New task")}</span>
               </button>
             )}
           </div>
         </header>
 
-        {workspaceMode === "tasks" && selectedProjectId && !detailTask && <div className="board-toolbar">
+        {workspaceMode === "tasks" && selectedProjectId && <div className="board-toolbar">
           <div className="view-tabs" aria-label={text("看板视图", "Board views")}>
             <button
               className={`view-tab${boardView === "dashboard" ? " active" : ""}`}
@@ -3444,7 +3458,7 @@ export function App() {
               aria-pressed={boardView === "dashboard"}
               onClick={() => selectBoardView("dashboard")}
             >
-              {text("仪表盘", "Dashboard")}
+              {text("概览", "Overview")}
             </button>
             <button
               className={`view-tab${boardView === "issues" ? " active" : ""}`}
@@ -3452,7 +3466,7 @@ export function App() {
               aria-pressed={boardView === "issues"}
               onClick={() => selectBoardView("issues")}
             >
-              {text("议题看板", "Issue board")}
+              {text("看板视图", "Board")}
             </button>
             <button
               className={`view-tab${boardView === "list" ? " active" : ""}`}
@@ -3588,35 +3602,6 @@ export function App() {
 
         {workspaceMode === "research" ? (
           <ResearchBoard onOpenTask={openTaskFromResearch} />
-        ) : detailTask && selectedProject ? (
-          <TaskDetail
-            key={detailTask.id}
-            task={detailTask}
-            tasks={tasks.filter((task) => task.projectId === detailTask.projectId)}
-            referenceTasks={referenceTasks.filter((task) => task.projectId === detailTask.projectId)}
-            currentUser={currentUser}
-            availableLabels={availableLabels}
-            developmentScan={developmentScan}
-            developmentScanLoading={developmentScanLoading}
-            commentsRevision={commentsRevision}
-            attachmentsRevision={attachmentsRevision}
-            onCreateLabel={persistProjectLabel}
-            onDeleteLabel={removeProjectLabel}
-            onUpdate={(current, changes) => updateTaskProperties(current, changes)}
-            onOpenTask={openTaskDetail}
-            onAddRelation={(current, type, relatedTaskId, origin) => (
-              mutateTaskRelation("add", current, type, relatedTaskId, origin)
-            )}
-            onRemoveRelation={(current, type, relatedTaskId, origin) => (
-              mutateTaskRelation("remove", current, type, relatedTaskId, origin)
-            )}
-            onOpenThread={openThread}
-            onOpenLegacyLocalThread={openLegacyLocalThread}
-            onOpenInThread={openTaskInThread}
-            onCopy={(text, message) => void copyText(text, message)}
-            openingThread={openingThreadTaskId === detailTask.id}
-            onError={setActionError}
-          />
         ) : boardView !== "readme"
           && hasLoadedTasks
           && tasks.length === 0
@@ -3817,6 +3802,50 @@ export function App() {
               </>
             )}
           </div>
+        )}
+        {workspaceMode === "tasks" && detailTask && selectedProject && (
+          <aside
+            className="task-detail-drawer"
+            aria-label={text(`${detailTask.title} 任务详情`, `${detailTask.title} task details`)}
+          >
+            <header className="task-detail-drawer-header">
+              <h2>{detailTask.externalKey ?? detailTask.identifier}</h2>
+              <button
+                type="button"
+                aria-label={text("关闭任务详情", "Close task details")}
+                title={text("关闭任务详情 (Esc)", "Close task details (Esc)")}
+                onClick={closeTaskDetail}
+              >
+                <span aria-hidden="true">×</span>
+              </button>
+            </header>
+            <div className="task-detail-drawer-body">
+              <TaskDetail
+                key={detailTask.id}
+                task={detailTask}
+                tasks={tasks.filter((task) => task.projectId === detailTask.projectId)}
+                referenceTasks={referenceTasks.filter((task) => task.projectId === detailTask.projectId)}
+                currentUser={currentUser}
+                availableLabels={availableLabels}
+                developmentScan={developmentScan}
+                developmentScanLoading={developmentScanLoading}
+                commentsRevision={commentsRevision}
+                attachmentsRevision={attachmentsRevision}
+                onCreateLabel={persistProjectLabel}
+                onDeleteLabel={removeProjectLabel}
+                onUpdate={(current, changes) => updateTaskProperties(current, changes)}
+                onOpenTask={openTaskDetail}
+                onAddRelation={(current, type, relatedTaskId, origin) => mutateTaskRelation("add", current, type, relatedTaskId, origin)}
+                onRemoveRelation={(current, type, relatedTaskId, origin) => mutateTaskRelation("remove", current, type, relatedTaskId, origin)}
+                onOpenThread={openThread}
+                onOpenLegacyLocalThread={openLegacyLocalThread}
+                onOpenInThread={openTaskInThread}
+                onCopy={(value, message) => void copyText(value, message)}
+                openingThread={openingThreadTaskId === detailTask.id}
+                onError={setActionError}
+              />
+            </div>
+          </aside>
         )}
       </main>
 

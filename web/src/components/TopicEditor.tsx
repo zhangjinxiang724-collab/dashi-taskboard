@@ -11,8 +11,8 @@ import {
 } from "../researchTypes";
 
 const STATUS_LABELS: Record<ResearchStatus, readonly [string, string]> = {
-  inbox: ["收件箱", "Inbox"],
-  active: ["主动研究", "Active Research"],
+  inbox: ["待整理", "Inbox"],
+  active: ["研究中", "Active Research"],
   waiting: ["等待", "Waiting"],
   thesis_formed: ["观点已形成", "Thesis Formed"],
   tracking: ["持续跟踪", "Tracking"],
@@ -20,9 +20,9 @@ const STATUS_LABELS: Record<ResearchStatus, readonly [string, string]> = {
 };
 
 const CONFIDENCE_LABELS: Record<ConfidenceLevel, readonly [string, string]> = {
-  low: ["低", "Low"],
-  medium: ["中", "Medium"],
-  high: ["高", "High"],
+  low: ["低置信度", "Low confidence"],
+  medium: ["中置信度", "Medium confidence"],
+  high: ["高置信度", "High confidence"],
 };
 
 export function researchStatusLabel(

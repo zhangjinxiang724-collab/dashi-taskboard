@@ -23,6 +23,7 @@ export function TopicQuestionList({
 }) {
   const { text } = useTaskboardI18n();
   const [newQuestion, setNewQuestion] = useState("");
+  const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editQuestion, setEditQuestion] = useState("");
   const [editNote, setEditNote] = useState("");
@@ -58,6 +59,7 @@ export function TopicQuestionList({
     try {
       await run(() => createTopicQuestion(topic.id, value));
       setNewQuestion("");
+      setAdding(false);
     } catch {
       // The inline error already explains the failure.
     }
@@ -123,25 +125,30 @@ export function TopicQuestionList({
   return (
     <section className="research-questions-panel">
       <div className="research-section-heading">
-        <div>
-          <span>{text("认知缺口", "Knowledge gaps")}</span>
-          <h2>{text("未解决问题", "Open Questions")}</h2>
-        </div>
+        <h2>{text("未解决问题", "Open Questions")}</h2>
         <span className="research-open-count">{topic.openQuestionCount} {text("个未解决", "open")}</span>
       </div>
 
-      <form className="research-question-create" onSubmit={(event) => void addQuestion(event)}>
-        <input
-          value={newQuestion}
-          maxLength={2_000}
-          onChange={(event) => setNewQuestion(event.target.value)}
-          placeholder={text("新增一个需要研究的问题…", "Add a question to investigate…")}
-          aria-label={text("新问题", "New question")}
-        />
-        <button className="button" type="submit" disabled={pending || !newQuestion.trim()}>
-          {text("添加问题", "Add question")}
-        </button>
-      </form>
+      {adding ? (
+        <form className="research-question-create" onSubmit={(event) => void addQuestion(event)}>
+          <input
+            autoFocus
+            value={newQuestion}
+            maxLength={2_000}
+            onChange={(event) => setNewQuestion(event.target.value)}
+            placeholder={text("写下一个需要继续研究的问题…", "Add a question to investigate…")}
+            aria-label={text("新问题", "New question")}
+          />
+          <button className="button" type="button" disabled={pending} onClick={() => { setAdding(false); setNewQuestion(""); }}>
+            {text("取消", "Cancel")}
+          </button>
+          <button className="button primary" type="submit" disabled={pending || !newQuestion.trim()}>
+            {text("添加", "Add")}
+          </button>
+        </form>
+      ) : (
+        <button className="research-add-question" type="button" onClick={() => setAdding(true)}>＋ {text("添加问题", "Add question")}</button>
+      )}
 
       {error && <div className="research-error" role="alert">{error}</div>}
 
@@ -158,7 +165,22 @@ export function TopicQuestionList({
                 <button type="button" disabled={pending || index === 0} onClick={() => void move(question, "up")} aria-label={text("上移问题", "Move question up")}>↑</button>
                 <button type="button" disabled={pending || index === topic.questions.length - 1} onClick={() => void move(question, "down")} aria-label={text("下移问题", "Move question down")}>↓</button>
               </div>
-              <div className="research-question-content">
+              <div
+                className="research-question-content"
+                role="button"
+                tabIndex={editingId === question.id || resolvingId === question.id ? -1 : 0}
+                aria-label={text("点击编辑问题", "Click to edit question")}
+                onClick={(event) => {
+                  if ((event.target as HTMLElement).closest("button, textarea")) return;
+                  if (editingId !== question.id && resolvingId !== question.id) beginEdit(question);
+                }}
+                onKeyDown={(event) => {
+                  if ((event.key === "Enter" || event.key === " ") && editingId !== question.id && resolvingId !== question.id) {
+                    event.preventDefault();
+                    beginEdit(question);
+                  }
+                }}
+              >
                 <div className="research-question-title">
                   <span className={`research-question-status status-${question.status}`}>{statusLabel(question.status)}</span>
                   <strong>{question.question}</strong>
