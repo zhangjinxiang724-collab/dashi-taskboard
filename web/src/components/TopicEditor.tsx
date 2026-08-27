@@ -2,7 +2,9 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import { useTaskboardI18n } from "../i18n";
 import {
+  CONFIDENCE_LEVELS,
   RESEARCH_STATUSES,
+  type ConfidenceLevel,
   type ResearchStatus,
   type Topic,
   type TopicDraft,
@@ -17,11 +19,24 @@ const STATUS_LABELS: Record<ResearchStatus, readonly [string, string]> = {
   archived: ["已归档", "Archived"],
 };
 
+const CONFIDENCE_LABELS: Record<ConfidenceLevel, readonly [string, string]> = {
+  low: ["低", "Low"],
+  medium: ["中", "Medium"],
+  high: ["高", "High"],
+};
+
 export function researchStatusLabel(
   status: ResearchStatus,
   text: (chinese: string, english: string) => string,
 ) {
   return text(...STATUS_LABELS[status]);
+}
+
+export function confidenceLabel(
+  confidence: ConfidenceLevel | null,
+  text: (chinese: string, english: string) => string,
+) {
+  return confidence ? text(...CONFIDENCE_LABELS[confidence]) : text("未设置", "Not set");
 }
 
 export function TopicEditor({
@@ -42,7 +57,11 @@ export function TopicEditor({
   const [status, setStatus] = useState<ResearchStatus>(topic?.status ?? "inbox");
   const [coreQuestion, setCoreQuestion] = useState(topic?.coreQuestion ?? "");
   const [currentView, setCurrentView] = useState(topic?.currentView ?? "");
+  const [confidenceLevel, setConfidenceLevel] = useState<ConfidenceLevel | null>(
+    topic?.confidenceLevel ?? null,
+  );
   const [nextAction, setNextAction] = useState(topic?.nextAction ?? "");
+  const [reviewTrigger, setReviewTrigger] = useState(topic?.reviewTrigger ?? "");
   const [labels, setLabels] = useState(topic?.labels.join(", ") ?? "");
 
   useEffect(() => {
@@ -60,7 +79,9 @@ export function TopicEditor({
       status,
       coreQuestion: coreQuestion.trim(),
       currentView: currentView.trim(),
+      confidenceLevel,
       nextAction: nextAction.trim(),
+      reviewTrigger: reviewTrigger.trim(),
       labels: [...new Set(labels.split(",").map((label) => label.trim()).filter(Boolean))],
     });
   }
@@ -88,21 +109,32 @@ export function TopicEditor({
               {RESEARCH_STATUSES.map((candidate) => <option key={candidate} value={candidate}>{researchStatusLabel(candidate, text)}</option>)}
             </select>
           </label>
-          <label className="wide">
-            <span>{text("核心问题", "Core Question")}</span>
-            <textarea rows={3} value={coreQuestion} onChange={(event) => setCoreQuestion(event.target.value)} />
+          <label>
+            <span>{text("置信度", "Confidence")}</span>
+            <select value={confidenceLevel ?? ""} onChange={(event) => setConfidenceLevel((event.target.value || null) as ConfidenceLevel | null)}>
+              <option value="">{text("未设置", "Not set")}</option>
+              {CONFIDENCE_LEVELS.map((candidate) => <option key={candidate} value={candidate}>{confidenceLabel(candidate, text)}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>{text("标签（英文逗号分隔）", "Labels (comma separated)")}</span>
+            <input value={labels} onChange={(event) => setLabels(event.target.value)} />
           </label>
           <label className="wide">
             <span>{text("当前观点", "Current View")}</span>
-            <textarea rows={4} value={currentView} onChange={(event) => setCurrentView(event.target.value)} />
+            <textarea rows={5} value={currentView} onChange={(event) => setCurrentView(event.target.value)} />
+          </label>
+          <label className="wide">
+            <span>{text("核心问题", "Core Question")}</span>
+            <textarea rows={3} value={coreQuestion} onChange={(event) => setCoreQuestion(event.target.value)} />
           </label>
           <label className="wide">
             <span>{text("下一步行动", "Next Action")}</span>
             <textarea rows={3} value={nextAction} onChange={(event) => setNextAction(event.target.value)} />
           </label>
           <label className="wide">
-            <span>{text("标签（用英文逗号分隔）", "Labels (comma separated)")}</span>
-            <input value={labels} onChange={(event) => setLabels(event.target.value)} />
+            <span>{text("重新研究触发条件", "Review Trigger")}</span>
+            <textarea rows={2} value={reviewTrigger} onChange={(event) => setReviewTrigger(event.target.value)} placeholder={text("例如：下一季度财报发布", "For example: Next quarterly results")} />
           </label>
         </div>
         {error && <div className="form-error" role="alert">{error}</div>}

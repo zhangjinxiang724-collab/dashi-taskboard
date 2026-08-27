@@ -451,7 +451,7 @@ export class TaskboardDatabase {
     this.database = new DatabaseSync(filename);
     this.database.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
     this.#migrate();
-    this.research = new ResearchDatabase(this.database);
+    this.research = new ResearchDatabase(this.database, { databasePath: filename });
     this.interruptAbandonedAiChatRuns();
   }
 

@@ -1,5 +1,13 @@
 import { request } from "./api";
-import type { Topic, TopicDetail, TopicDraft, ResearchStatus } from "./researchTypes";
+import type {
+  ConfidenceLevel,
+  Topic,
+  TopicDetail,
+  TopicDraft,
+  TopicQuestion,
+  TopicQuestionStatus,
+  ResearchStatus,
+} from "./researchTypes";
 
 export async function listTopics(signal?: AbortSignal): Promise<Topic[]> {
   const data = await request<{ topics: Topic[] }>("/api/research/topics", { signal });
@@ -24,7 +32,16 @@ export async function createTopic(input: TopicDraft): Promise<Topic> {
 
 export async function updateTopic(
   topic: Topic,
-  changes: Partial<Pick<TopicDraft, "title" | "status" | "coreQuestion" | "currentView" | "nextAction" | "labels">>,
+  changes: Partial<{
+    title: string;
+    status: ResearchStatus;
+    coreQuestion: string;
+    currentView: string;
+    confidenceLevel: ConfidenceLevel | null;
+    nextAction: string;
+    reviewTrigger: string;
+    labels: string[];
+  }>,
 ): Promise<TopicDetail> {
   const data = await request<{ topic: TopicDetail }>(
     `/api/research/topics/${encodeURIComponent(topic.id)}`,
@@ -38,6 +55,67 @@ export async function updateTopic(
 
 export function moveTopic(topic: Topic, status: ResearchStatus): Promise<TopicDetail> {
   return updateTopic(topic, { status });
+}
+
+export async function markTopicResearched(topic: Topic): Promise<TopicDetail> {
+  const data = await request<{ topic: TopicDetail }>(
+    `/api/research/topics/${encodeURIComponent(topic.id)}/mark-researched`,
+    {
+      method: "POST",
+      body: JSON.stringify({ version: topic.version }),
+    },
+  );
+  return data.topic;
+}
+
+export async function createTopicQuestion(topicId: string, question: string): Promise<TopicDetail> {
+  const data = await request<{ topic: TopicDetail }>(
+    `/api/research/topics/${encodeURIComponent(topicId)}/questions`,
+    {
+      method: "POST",
+      body: JSON.stringify({ question }),
+    },
+  );
+  return data.topic;
+}
+
+export async function updateTopicQuestion(
+  question: TopicQuestion,
+  changes: Partial<Pick<TopicQuestion, "question" | "status" | "answerOrNote">>,
+): Promise<TopicDetail> {
+  const data = await request<{ topic: TopicDetail }>(
+    `/api/research/topics/${encodeURIComponent(question.topicId)}/questions/${encodeURIComponent(question.id)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ version: question.version, ...changes }),
+    },
+  );
+  return data.topic;
+}
+
+export function setTopicQuestionStatus(
+  question: TopicQuestion,
+  status: TopicQuestionStatus,
+  answerOrNote?: string,
+): Promise<TopicDetail> {
+  return updateTopicQuestion(question, {
+    status,
+    ...(answerOrNote === undefined ? {} : { answerOrNote }),
+  });
+}
+
+export async function moveTopicQuestion(
+  question: TopicQuestion,
+  direction: "up" | "down",
+): Promise<TopicDetail> {
+  const data = await request<{ topic: TopicDetail }>(
+    `/api/research/topics/${encodeURIComponent(question.topicId)}/questions/${encodeURIComponent(question.id)}/move`,
+    {
+      method: "POST",
+      body: JSON.stringify({ version: question.version, direction }),
+    },
+  );
+  return data.topic;
 }
 
 export async function linkTopicTask(topicId: string, taskId: string): Promise<TopicDetail> {

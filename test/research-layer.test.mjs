@@ -113,7 +113,7 @@ test("Topic and existing Task form the minimal Research OS loop", async () => {
     assert.deepEqual(
       database.prepare("SELECT version FROM research_schema_migrations ORDER BY version").all()
         .map((row) => row.version),
-      ["001_topic_task_core"],
+      ["001_topic_task_core", "002_topic_current_state"],
     );
     assert.equal(
       database.prepare("SELECT 1 FROM pragma_table_info('tasks') WHERE name = 'topic_id'").get(),
