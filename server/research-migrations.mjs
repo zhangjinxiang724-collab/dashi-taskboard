@@ -101,6 +101,73 @@ const RESEARCH_MIGRATIONS = [
       `);
     },
   },
+  {
+    version: "004_chatgpt_historical_import",
+    up(database) {
+      database.exec(`
+        ALTER TABLE research_records ADD COLUMN source_fingerprint TEXT;
+
+        CREATE TABLE research_record_contents (
+          record_id TEXT PRIMARY KEY REFERENCES research_records(id) ON DELETE CASCADE,
+          content_encoding TEXT NOT NULL CHECK (content_encoding = 'gzip-json-v1'),
+          content_blob BLOB NOT NULL,
+          content_hash TEXT NOT NULL,
+          message_count INTEGER NOT NULL CHECK (message_count >= 0),
+          source_created_at TEXT,
+          source_updated_at TEXT,
+          omitted_message_count INTEGER NOT NULL DEFAULT 0 CHECK (omitted_message_count >= 0),
+          deleted_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE research_import_sessions (
+          id TEXT PRIMARY KEY,
+          provider TEXT NOT NULL,
+          capture_adapter TEXT NOT NULL,
+          source_filename TEXT NOT NULL,
+          source_hash TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('committed', 'undone')),
+          selected_count INTEGER NOT NULL CHECK (selected_count >= 0),
+          imported_count INTEGER NOT NULL CHECK (imported_count >= 0),
+          skipped_count INTEGER NOT NULL CHECK (skipped_count >= 0),
+          failed_count INTEGER NOT NULL CHECK (failed_count >= 0),
+          unclassified_count INTEGER NOT NULL CHECK (unclassified_count >= 0),
+          version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          undone_at TEXT
+        );
+
+        CREATE TABLE research_import_session_records (
+          session_id TEXT NOT NULL REFERENCES research_import_sessions(id) ON DELETE CASCADE,
+          source_key TEXT NOT NULL,
+          source_fingerprint TEXT NOT NULL,
+          record_id TEXT REFERENCES research_records(id) ON DELETE SET NULL,
+          outcome TEXT NOT NULL CHECK (outcome IN ('imported', 'duplicate', 'failed')),
+          imported_record_version INTEGER,
+          error_message TEXT,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (session_id, source_key)
+        );
+
+        CREATE UNIQUE INDEX research_records_active_provider_external
+          ON research_records(provider, external_id)
+          WHERE deleted_at IS NULL AND external_id IS NOT NULL
+            AND capture_adapter = 'chatgpt-export-v1';
+        CREATE UNIQUE INDEX research_records_active_provider_fingerprint
+          ON research_records(provider, source_fingerprint)
+          WHERE deleted_at IS NULL AND source_fingerprint IS NOT NULL;
+        CREATE INDEX research_records_unclassified_occurred
+          ON research_records(occurred_at DESC, id)
+          WHERE deleted_at IS NULL AND primary_topic_id IS NULL;
+        CREATE INDEX research_import_sessions_created
+          ON research_import_sessions(created_at DESC, id);
+        CREATE INDEX research_import_session_records_record
+          ON research_import_session_records(record_id);
+      `);
+    },
+  },
 ];
 
 function appliedVersions(database) {

@@ -1,4 +1,4 @@
-import { request } from "./api";
+import { ApiError, request, resolveTaskboardUrl } from "./api";
 import type {
   ConfidenceLevel,
   Topic,
@@ -9,6 +9,9 @@ import type {
   ResearchStatus,
   ResearchRecord,
   ResearchRecordDraft,
+  ImportPreviewPage,
+  ResearchImportSession,
+  ResearchRecordContent,
 } from "./researchTypes";
 
 export async function listTopics(signal?: AbortSignal): Promise<Topic[]> {
@@ -187,4 +190,83 @@ export async function deleteResearchRecord(record: ResearchRecord): Promise<void
     method: "DELETE",
     body: JSON.stringify({ version: record.version }),
   });
+}
+
+export async function createChatGptImportPreview(file: File): Promise<{
+  id: string; sourceFilename: string; sourceHash: string; validCount: number; invalidCount: number;
+}> {
+  const response = await fetch(resolveTaskboardUrl("/api/research/imports/chatgpt/preview"), {
+    method: "POST",
+    headers: {
+      "content-type": file.type || "application/octet-stream",
+      "x-research-import-filename": file.name,
+    },
+    body: file,
+  });
+  const data = await response.json();
+  if (!response.ok) throw new ApiError(response.status, data);
+  return data.preview;
+}
+
+export async function getImportPreview(
+  id: string,
+  options: { page?: number; pageSize?: number; search?: string; duplicates?: "all" | "only" | "exclude" } = {},
+): Promise<ImportPreviewPage> {
+  const query = new URLSearchParams();
+  if (options.page) query.set("page", String(options.page));
+  if (options.pageSize) query.set("pageSize", String(options.pageSize));
+  if (options.search) query.set("search", options.search);
+  if (options.duplicates) query.set("duplicates", options.duplicates);
+  const data = await request<{ preview: ImportPreviewPage }>(`/api/research/imports/previews/${encodeURIComponent(id)}?${query}`);
+  return data.preview;
+}
+
+export async function getSelectableImportPreviewKeys(id: string, search = ""): Promise<string[]> {
+  const query = new URLSearchParams();
+  if (search) query.set("search", search);
+  const data = await request<{ sourceKeys: string[] }>(
+    `/api/research/imports/previews/${encodeURIComponent(id)}/selection?${query}`,
+  );
+  return data.sourceKeys;
+}
+
+export async function confirmResearchImport(
+  previewId: string,
+  selections: Array<{ sourceKey: string; topicId: string | null }>,
+) {
+  const data = await request<{ session: { sessionId: string; imported: number; skipped: number; failed: number; unclassified: number } }>(
+    `/api/research/imports/previews/${encodeURIComponent(previewId)}/confirm`,
+    { method: "POST", body: JSON.stringify({ selections }) },
+  );
+  return data.session;
+}
+
+export async function listUnclassifiedResearchRecords(): Promise<ResearchRecord[]> {
+  const data = await request<{ records: ResearchRecord[] }>("/api/research/records/unclassified");
+  return data.records;
+}
+
+export async function assignResearchRecordsToTopic(recordIds: string[], topicId: string): Promise<number> {
+  const data = await request<{ updated: number }>("/api/research/records/assign-topic", {
+    method: "POST", body: JSON.stringify({ recordIds, topicId }),
+  });
+  return data.updated;
+}
+
+export async function listResearchImportSessions(): Promise<ResearchImportSession[]> {
+  const data = await request<{ sessions: ResearchImportSession[] }>("/api/research/imports/sessions");
+  return data.sessions;
+}
+
+export async function undoResearchImportSession(session: ResearchImportSession) {
+  const data = await request<{ result: { kind: string; count?: number } }>(
+    `/api/research/imports/sessions/${encodeURIComponent(session.id)}/undo`,
+    { method: "POST", body: JSON.stringify({ version: session.version }) },
+  );
+  return data.result;
+}
+
+export async function getResearchRecordContent(recordId: string): Promise<ResearchRecordContent> {
+  const data = await request<{ content: ResearchRecordContent }>(`/api/research/records/${encodeURIComponent(recordId)}/content`);
+  return data.content;
 }

@@ -32,6 +32,7 @@ import { ApiError, TaskboardDatabase } from "./database.mjs";
 import { createJiraConfigStore } from "./jira-config.mjs";
 import { createJiraIntegration } from "./jira-integration.mjs";
 import { ProjectSummaryService } from "./project-summary.mjs";
+import { ResearchImportService } from "./research-import-service.mjs";
 import { handleResearchRequest } from "./research-routes.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -1653,6 +1654,7 @@ export function createTaskboardServer(options = {}) {
   );
   const routePrefix = resolved.instanceToken ? `/${resolved.instanceToken}` : "";
   const database = new TaskboardDatabase(resolved.databasePath);
+  const researchImports = new ResearchImportService(database.research);
   const events = new EventHub();
   let clientStorageWrite = Promise.resolve();
 
@@ -2479,6 +2481,7 @@ export function createTaskboardServer(options = {}) {
         response,
         url,
         research: database.research,
+        researchImports,
         readJson,
         sendJson,
         sendEmpty,
@@ -3409,6 +3412,7 @@ export function createTaskboardServer(options = {}) {
       aiEventResponses.clear();
       await aiChat.close();
       await projectSummary.close();
+      await researchImports.close();
       await serverClosed;
       listening = false;
       database.close();

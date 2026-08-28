@@ -805,6 +805,116 @@
   .research-record-actions { margin-top: 4px; }
 }
 
+/* Phase 3.5: local historical import tools stay inside the Research visual layer. */
+.research-board-actions { display: flex; align-items: center; gap: 8px; }
+.research-import-backdrop,
+.research-content-backdrop {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 28px;
+  background: rgb(20 20 20 / 18%);
+}
+.research-importer,
+.research-content-reader {
+  display: flex;
+  overflow: hidden;
+  flex-direction: column;
+  width: min(980px, 96vw);
+  max-height: min(860px, 92vh);
+  border: 1px solid var(--qw-color-border);
+  border-radius: 16px;
+  background: var(--qw-color-surface);
+  box-shadow: 0 18px 60px rgb(0 0 0 / 12%);
+}
+.research-importer > header,
+.research-content-reader > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 22px 24px 16px;
+}
+.research-importer > header span,
+.research-content-reader > header span { color: var(--qw-color-text-faint); font-size: 11px; }
+.research-importer > header h2,
+.research-content-reader > header h2 { margin: 3px 0 0; font-size: 20px; line-height: 1.35; }
+.research-importer > header > button,
+.research-content-reader > header > button {
+  width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent;
+  color: var(--qw-color-text-muted); font-size: 22px; cursor: pointer;
+}
+.research-importer > nav { display: flex; gap: 20px; padding: 0 24px; border-bottom: 1px solid var(--qw-color-border); }
+.research-importer > nav button { padding: 10px 0; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--qw-color-text-muted); cursor: pointer; }
+.research-importer > nav button.active { border-bottom-color: var(--qw-color-text); color: var(--qw-color-text); font-weight: 600; }
+.research-importer > .research-error,
+.research-import-result { margin: 14px 24px 0; padding: 10px 12px; border-radius: 8px; font-size: 12px; }
+.research-import-result { background: var(--qw-color-surface-muted); color: var(--qw-color-text-muted); }
+.research-import-result { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.research-import-result button { border: 0; background: transparent; color: var(--qw-color-accent); font: inherit; cursor: pointer; }
+.research-import-body { overflow: auto; padding: 18px 24px 22px; }
+.research-import-safety { display: flex; gap: 12px; margin-bottom: 14px; color: var(--qw-color-text-muted); font-size: 12px; }
+.research-import-safety strong { color: var(--qw-color-text); white-space: nowrap; }
+.research-import-file { display: flex; align-items: center; justify-content: center; min-height: 74px; border: 1px dashed var(--qw-color-border-strong); border-radius: 10px; background: var(--qw-color-surface-subtle); color: var(--qw-color-text-muted); cursor: pointer; }
+.research-import-file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.research-import-toolbar { display: grid; grid-template-columns: 1fr 160px auto; gap: 8px; margin: 18px 0 10px; }
+.research-import-toolbar input,
+.research-import-toolbar select,
+.research-import-toolbar button,
+.research-import-footer select,
+.research-import-footer button { min-height: 34px; border: 1px solid var(--qw-color-border); border-radius: 7px; background: var(--qw-color-surface); color: var(--qw-color-text); }
+.research-import-toolbar input { padding: 0 10px; }
+.research-import-list { border-top: 1px solid var(--qw-color-border); }
+.research-import-list > label { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 10px; padding: 13px 4px; border-bottom: 1px solid var(--qw-color-border); cursor: pointer; }
+.research-import-list > label > select { align-self: start; max-width: 200px; min-height: 30px; border: 1px solid var(--qw-color-border); border-radius: 7px; background: var(--qw-color-surface); color: var(--qw-color-text-muted); font-size: 11px; }
+.research-import-list > label.duplicate { opacity: .55; }
+.research-import-list strong { display: block; margin-bottom: 3px; font-size: 13px; }
+.research-import-list small { color: var(--qw-color-text-faint); font-size: 11px; }
+.research-import-list p { overflow: hidden; margin: 5px 0 0; color: var(--qw-color-text-muted); font-size: 12px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+.research-import-footer { display: flex; align-items: center; gap: 10px; padding-top: 14px; color: var(--qw-color-text-muted); font-size: 12px; }
+.research-import-footer > span { margin-right: auto; }
+.research-import-footer select { min-width: 180px; padding: 0 8px; }
+.research-import-pagination { display: flex; align-items: center; gap: 7px; }
+.research-import-pagination button { border: 0; background: transparent; color: var(--qw-color-text-muted); cursor: pointer; }
+.research-import-pagination button:disabled { opacity: .35; }
+.research-import-intro { margin: 0 0 14px; color: var(--qw-color-text-muted); font-size: 12px; }
+.research-import-history article { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 14px; padding: 13px 0; border-bottom: 1px solid var(--qw-color-border); }
+.research-import-history article div { display: flex; flex-direction: column; gap: 3px; }
+.research-import-history article span { color: var(--qw-color-text-faint); font-size: 11px; }
+.research-import-history article button { border: 0; background: transparent; color: var(--qw-color-text-muted); cursor: pointer; }
+.research-import-final-preview { padding: 26px 0 6px; }
+.research-import-final-preview > div > span { color: var(--qw-color-text-faint); font-size: 11px; }
+.research-import-final-preview h3 { margin: 5px 0 8px; font-size: 18px; }
+.research-import-final-preview p { max-width: 650px; margin: 0; color: var(--qw-color-text-muted); font-size: 12px; line-height: 1.6; }
+.research-import-final-preview dl { margin: 24px 0; border-top: 1px solid var(--qw-color-border); }
+.research-import-final-preview dl > div { display: grid; grid-template-columns: 110px 1fr; padding: 11px 0; border-bottom: 1px solid var(--qw-color-border); font-size: 12px; }
+.research-import-final-preview dt { color: var(--qw-color-text-faint); }
+.research-import-final-preview dd { margin: 0; }
+.research-import-final-preview footer { display: flex; justify-content: flex-end; gap: 8px; }
+.research-import-final-preview footer > button:first-child { border: 0; background: transparent; color: var(--qw-color-text-muted); cursor: pointer; }
+.research-content-reader { width: min(760px, 94vw); }
+.research-content-meta { padding: 0 24px 12px; border-bottom: 1px solid var(--qw-color-border); color: var(--qw-color-text-faint); font-size: 11px; }
+.research-content-messages { overflow: auto; padding: 4px 24px 28px; }
+.research-content-messages article { padding: 18px 0; border-bottom: 1px solid var(--qw-color-border); }
+.research-content-messages article strong { font-size: 12px; }
+.research-content-messages article p { margin: 8px 0 0; color: var(--qw-color-text); font-size: 13px; line-height: 1.65; white-space: pre-wrap; }
+.research-content-messages article.role-user p { color: var(--qw-color-text-muted); }
+
+@media (max-width: 760px) {
+  .research-import-backdrop, .research-content-backdrop { padding: 8px; }
+  .research-import-toolbar { grid-template-columns: 1fr; }
+  .research-import-footer { align-items: stretch; flex-direction: column; }
+  .research-import-footer > span { margin-right: 0; }
+  .research-import-footer select { width: 100%; }
+  .research-import-pagination { justify-content: space-between; }
+  .research-import-list > label { grid-template-columns: 20px minmax(0, 1fr); }
+  .research-import-list > label > select { grid-column: 2; width: 100%; max-width: none; }
+  .research-board-actions { align-items: stretch; flex-direction: column; }
+}
+
 .research-focus-grid { gap: 20px; }
 .research-inline-action,
 .research-add-question { opacity: 0.66; }

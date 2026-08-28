@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { gunzipSync } from "node:zlib";
 
 import { applyResearchMigrations } from "./research-migrations.mjs";
 
@@ -76,6 +77,7 @@ function researchRecordFromRow(row) {
 export class ResearchDatabase {
   constructor(database, { databasePath } = {}) {
     this.database = database;
+    this.databasePath = databasePath;
     this.migrationResult = applyResearchMigrations(database, { databasePath });
   }
 
@@ -345,6 +347,136 @@ export class ResearchDatabase {
       SELECT * FROM research_records
       WHERE id = ? ${includeDeleted ? "" : "AND deleted_at IS NULL"}
     `).get(id));
+  }
+
+  getResearchRecordContent(id) {
+    const row = this.database.prepare(`
+      SELECT c.* FROM research_record_contents c
+      JOIN research_records r ON r.id = c.record_id
+      WHERE c.record_id = ? AND r.deleted_at IS NULL AND c.deleted_at IS NULL
+    `).get(id);
+    if (!row) return null;
+    const contentBuffer = gunzipSync(row.content_blob);
+    const contentHash = `sha256:${createHash("sha256").update(contentBuffer).digest("hex")}`;
+    if (contentHash !== row.content_hash) {
+      throw new Error(`Imported research record content failed its integrity check: ${id}`);
+    }
+    return {
+      recordId: row.record_id,
+      content: JSON.parse(contentBuffer.toString("utf8")),
+      contentHash: row.content_hash,
+      messageCount: row.message_count,
+      omittedMessageCount: row.omitted_message_count,
+      sourceCreatedAt: row.source_created_at,
+      sourceUpdatedAt: row.source_updated_at,
+    };
+  }
+
+  findImportedDuplicate(provider, externalId, sourceFingerprint) {
+    return this.database.prepare(`
+      SELECT id, external_id, source_fingerprint FROM research_records
+      WHERE provider = ? AND deleted_at IS NULL AND capture_adapter = 'chatgpt-export-v1'
+        AND ((? IS NOT NULL AND external_id = ?) OR source_fingerprint = ?)
+      LIMIT 1
+    `).get(provider, externalId, externalId, sourceFingerprint) ?? null;
+  }
+
+  listUnclassifiedResearchRecords() {
+    return this.database.prepare(`
+      SELECT * FROM research_records
+      WHERE primary_topic_id IS NULL AND deleted_at IS NULL
+      ORDER BY occurred_at DESC, created_at DESC, id DESC
+    `).all().map(researchRecordFromRow);
+  }
+
+  assignResearchRecords(recordIds, topicId) {
+    if (!this.database.prepare("SELECT 1 FROM topics WHERE id = ?").get(topicId)) {
+      return { kind: "topic_not_found" };
+    }
+    const uniqueIds = [...new Set(recordIds)];
+    const timestamp = now();
+    const update = this.database.prepare(`
+      UPDATE research_records
+      SET primary_topic_id = ?, version = version + 1, updated_at = ?
+      WHERE id = ? AND deleted_at IS NULL
+    `);
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      let updated = 0;
+      for (const id of uniqueIds) updated += update.run(topicId, timestamp, id).changes;
+      this.database.exec("COMMIT");
+      return { kind: "updated", updated };
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  listImportSessions() {
+    return this.database.prepare(`
+      SELECT * FROM research_import_sessions ORDER BY created_at DESC, id DESC
+    `).all().map((row) => ({
+      id: row.id,
+      provider: row.provider,
+      captureAdapter: row.capture_adapter,
+      sourceFilename: row.source_filename,
+      status: row.status,
+      selectedCount: row.selected_count,
+      importedCount: row.imported_count,
+      skippedCount: row.skipped_count,
+      failedCount: row.failed_count,
+      unclassifiedCount: row.unclassified_count,
+      version: row.version,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      undoneAt: row.undone_at,
+    }));
+  }
+
+  undoImportSession(sessionId, version) {
+    const session = this.database.prepare(`SELECT * FROM research_import_sessions WHERE id = ?`).get(sessionId);
+    if (!session) return { kind: "not_found" };
+    if (session.status === "undone") return { kind: "already_undone" };
+    if (session.version !== version) return { kind: "conflict", currentVersion: session.version };
+    const records = this.database.prepare(`
+      SELECT link.record_id, link.imported_record_version, record.version, record.deleted_at,
+        EXISTS(SELECT 1 FROM research_record_tasks t WHERE t.record_id = record.id) AS has_tasks
+      FROM research_import_session_records link
+      JOIN research_records record ON record.id = link.record_id
+      WHERE link.session_id = ? AND link.outcome = 'imported'
+    `).all(sessionId);
+    const unsafe = records.find((record) => (
+      record.deleted_at !== null
+      || record.version !== record.imported_record_version
+      || record.has_tasks
+    ));
+    if (unsafe) return { kind: "unsafe", recordId: unsafe.record_id };
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const softDeleteRecord = this.database.prepare(`
+        UPDATE research_records SET deleted_at = ?, updated_at = ?, version = version + 1
+        WHERE id = ? AND deleted_at IS NULL
+      `);
+      const softDeleteContent = this.database.prepare(`
+        UPDATE research_record_contents SET deleted_at = ?, updated_at = ?
+        WHERE record_id = ? AND deleted_at IS NULL
+      `);
+      for (const record of records) {
+        softDeleteRecord.run(timestamp, timestamp, record.record_id);
+        softDeleteContent.run(timestamp, timestamp, record.record_id);
+      }
+      this.database.prepare(`
+        UPDATE research_import_sessions
+        SET status = 'undone', version = version + 1, updated_at = ?, undone_at = ?
+        WHERE id = ? AND version = ?
+      `).run(timestamp, timestamp, sessionId, version);
+      this.database.exec("COMMIT");
+      return { kind: "undone", count: records.length };
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   createResearchRecord(topicId, input) {

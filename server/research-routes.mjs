@@ -14,6 +14,11 @@ const TOPIC_QUESTION_MOVE_PATH = /^\/api\/research\/topics\/([^/]+)\/questions\/
 const TOPIC_TASK_PATH = /^\/api\/research\/topics\/([^/]+)\/tasks\/([^/]+)$/;
 const TOPIC_RECORDS_PATH = /^\/api\/research\/topics\/([^/]+)\/records$/;
 const RESEARCH_RECORD_PATH = /^\/api\/research\/records\/([^/]+)$/;
+const RESEARCH_RECORD_CONTENT_PATH = /^\/api\/research\/records\/([^/]+)\/content$/;
+const IMPORT_PREVIEW_PATH = /^\/api\/research\/imports\/previews\/([^/]+)$/;
+const IMPORT_PREVIEW_CONFIRM_PATH = /^\/api\/research\/imports\/previews\/([^/]+)\/confirm$/;
+const IMPORT_PREVIEW_SELECTION_PATH = /^\/api\/research\/imports\/previews\/([^/]+)\/selection$/;
+const IMPORT_SESSION_UNDO_PATH = /^\/api\/research\/imports\/sessions\/([^/]+)\/undo$/;
 
 function assertPlainObject(value, ApiError) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -303,6 +308,7 @@ export async function handleResearchRequest({
   response,
   url,
   research,
+  researchImports,
   readJson,
   sendJson,
   sendEmpty,
@@ -311,6 +317,184 @@ export async function handleResearchRequest({
 }) {
   const pathname = url.pathname;
   if (!pathname.startsWith("/api/research/")) return false;
+
+  if (pathname === "/api/research/imports/chatgpt/preview") {
+    if (request.method !== "POST") {
+      methodNotAllowed(response, ["POST"]);
+      return true;
+    }
+    if ([...url.searchParams.keys()].length > 0) {
+      throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Preview upload does not accept query parameters");
+    }
+    const sourceFilename = String(request.headers["x-research-import-filename"] ?? "").trim();
+    if (!sourceFilename || sourceFilename.length > 255 || sourceFilename.includes("/") || sourceFilename.includes("\\")) {
+      throw new ApiError(400, "INVALID_IMPORT_FILENAME", "A safe import filename is required");
+    }
+    const contentType = request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
+    if (!new Set(["application/zip", "application/json", "application/octet-stream"]).has(contentType)) {
+      throw new ApiError(415, "UNSUPPORTED_MEDIA_TYPE", "Import must be a ZIP or JSON file");
+    }
+    try {
+      const preview = await researchImports.createPreview(request, sourceFilename);
+      sendJson(response, 201, { preview });
+    } catch (error) {
+      throw new ApiError(400, "INVALID_CHATGPT_EXPORT", error instanceof Error ? error.message : "Import could not be parsed");
+    }
+    return true;
+  }
+
+  const previewConfirmMatch = pathname.match(IMPORT_PREVIEW_CONFIRM_PATH);
+  if (previewConfirmMatch) {
+    if (request.method !== "POST") {
+      methodNotAllowed(response, ["POST"]);
+      return true;
+    }
+    if ([...url.searchParams.keys()].length > 0) {
+      throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Import confirmation does not accept query parameters");
+    }
+    const body = await readJson(request, 16 * 1024 * 1024, "Import selection cannot exceed 16 MiB");
+    assertPlainObject(body, ApiError);
+    assertAllowedKeys(body, new Set(["selections"]), ApiError);
+    if (!Array.isArray(body.selections) || body.selections.length === 0 || body.selections.length > 100_000) {
+      throw new ApiError(400, "INVALID_SELECTION", "Choose between 1 and 100000 conversations");
+    }
+    const selections = body.selections.map((selection) => {
+      assertPlainObject(selection, ApiError);
+      assertAllowedKeys(selection, new Set(["sourceKey", "topicId"]), ApiError);
+      return {
+        sourceKey: text(selection.sourceKey, "sourceKey", ApiError, { required: true, maxLength: 500 }),
+        topicId: nullableText(selection.topicId, "topicId", ApiError, { maxLength: 100 }),
+      };
+    });
+    const result = researchImports.confirmImport(decodeURIComponent(previewConfirmMatch[1]), selections);
+    if (result.kind === "preview_not_found") {
+      throw new ApiError(404, "IMPORT_PREVIEW_NOT_FOUND", "Import preview expired or was not found");
+    }
+    sendJson(response, 201, { session: result });
+    return true;
+  }
+
+  const previewSelectionMatch = pathname.match(IMPORT_PREVIEW_SELECTION_PATH);
+  if (previewSelectionMatch) {
+    if (request.method !== "GET") {
+      methodNotAllowed(response, ["GET"]);
+      return true;
+    }
+    for (const key of url.searchParams.keys()) {
+      if (key !== "search" || url.searchParams.getAll(key).length !== 1) {
+        throw new ApiError(400, "INVALID_QUERY_PARAMETER", `Invalid selection query parameter: ${key}`);
+      }
+    }
+    const search = String(url.searchParams.get("search") ?? "").trim();
+    if (search.length > 500) throw new ApiError(400, "INVALID_QUERY_PARAMETER", "Search is too long");
+    const sourceKeys = researchImports.listSelectablePreviewKeys(
+      decodeURIComponent(previewSelectionMatch[1]),
+      { search },
+    );
+    if (!sourceKeys) throw new ApiError(404, "IMPORT_PREVIEW_NOT_FOUND", "Import preview expired or was not found");
+    sendJson(response, 200, { sourceKeys });
+    return true;
+  }
+
+  const previewMatch = pathname.match(IMPORT_PREVIEW_PATH);
+  if (previewMatch) {
+    if (request.method !== "GET") {
+      methodNotAllowed(response, ["GET"]);
+      return true;
+    }
+    const allowed = new Set(["page", "pageSize", "search", "duplicates"]);
+    for (const key of url.searchParams.keys()) {
+      if (!allowed.has(key) || url.searchParams.getAll(key).length !== 1) {
+        throw new ApiError(400, "INVALID_QUERY_PARAMETER", `Invalid preview query parameter: ${key}`);
+      }
+    }
+    const page = Number(url.searchParams.get("page") ?? 1);
+    const pageSize = Number(url.searchParams.get("pageSize") ?? 50);
+    const search = String(url.searchParams.get("search") ?? "").trim();
+    const duplicates = url.searchParams.get("duplicates") ?? "all";
+    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 200) {
+      throw new ApiError(400, "INVALID_QUERY_PARAMETER", "page and pageSize are invalid");
+    }
+    if (!new Set(["all", "only", "exclude"]).has(duplicates) || search.length > 500) {
+      throw new ApiError(400, "INVALID_QUERY_PARAMETER", "Preview filters are invalid");
+    }
+    const preview = researchImports.listPreview(decodeURIComponent(previewMatch[1]), { page, pageSize, search, duplicates });
+    if (!preview) throw new ApiError(404, "IMPORT_PREVIEW_NOT_FOUND", "Import preview expired or was not found");
+    sendJson(response, 200, { preview });
+    return true;
+  }
+
+  if (pathname === "/api/research/imports/sessions") {
+    if (request.method !== "GET") {
+      methodNotAllowed(response, ["GET"]);
+      return true;
+    }
+    if ([...url.searchParams.keys()].length > 0) {
+      throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Import sessions do not accept query parameters");
+    }
+    sendJson(response, 200, { sessions: research.listImportSessions() });
+    return true;
+  }
+
+  const undoMatch = pathname.match(IMPORT_SESSION_UNDO_PATH);
+  if (undoMatch) {
+    if (request.method !== "POST") {
+      methodNotAllowed(response, ["POST"]);
+      return true;
+    }
+    if ([...url.searchParams.keys()].length > 0) {
+      throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Import undo does not accept query parameters");
+    }
+    const version = parseVersionOnly(await readJson(request), ApiError);
+    const result = research.undoImportSession(decodeURIComponent(undoMatch[1]), version);
+    if (result.kind === "not_found") throw new ApiError(404, "IMPORT_SESSION_NOT_FOUND", "Import session not found");
+    if (result.kind === "conflict") throw new ApiError(409, "IMPORT_SESSION_VERSION_CONFLICT", "Import session changed", { currentVersion: result.currentVersion });
+    if (result.kind === "unsafe") throw new ApiError(409, "IMPORT_UNDO_UNSAFE", "Imported records changed or became linked to tasks", { recordId: result.recordId });
+    sendJson(response, 200, { result });
+    return true;
+  }
+
+  if (pathname === "/api/research/records/unclassified") {
+    if (request.method !== "GET") {
+      methodNotAllowed(response, ["GET"]);
+      return true;
+    }
+    if ([...url.searchParams.keys()].length > 0) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Unclassified records do not accept query parameters");
+    sendJson(response, 200, { records: research.listUnclassifiedResearchRecords() });
+    return true;
+  }
+
+  if (pathname === "/api/research/records/assign-topic") {
+    if (request.method !== "POST") {
+      methodNotAllowed(response, ["POST"]);
+      return true;
+    }
+    if ([...url.searchParams.keys()].length > 0) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Topic assignment does not accept query parameters");
+    const body = await readJson(request);
+    assertPlainObject(body, ApiError);
+    assertAllowedKeys(body, new Set(["recordIds", "topicId"]), ApiError);
+    if (!Array.isArray(body.recordIds) || body.recordIds.length === 0 || body.recordIds.some((id) => typeof id !== "string" || !id.trim())) {
+      throw new ApiError(400, "INVALID_FIELD", "recordIds must be a non-empty string array");
+    }
+    const result = research.assignResearchRecords(body.recordIds, text(body.topicId, "topicId", ApiError, { required: true, maxLength: 100 }));
+    if (result.kind === "topic_not_found") throw new ApiError(404, "TOPIC_NOT_FOUND", "Topic not found");
+    sendJson(response, 200, { updated: result.updated });
+    return true;
+  }
+
+  const contentMatch = pathname.match(RESEARCH_RECORD_CONTENT_PATH);
+  if (contentMatch) {
+    if (request.method !== "GET") {
+      methodNotAllowed(response, ["GET"]);
+      return true;
+    }
+    if ([...url.searchParams.keys()].length > 0) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Record content does not accept query parameters");
+    const content = research.getResearchRecordContent(decodeURIComponent(contentMatch[1]));
+    if (!content) throw new ApiError(404, "RESEARCH_RECORD_CONTENT_NOT_FOUND", "Imported conversation content not found");
+    sendJson(response, 200, { content });
+    return true;
+  }
+
   if ([...url.searchParams.keys()].length > 0) {
     throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Research endpoints do not accept query parameters");
   }

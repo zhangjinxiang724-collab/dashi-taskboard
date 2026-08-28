@@ -102,3 +102,54 @@ export interface ResearchRecordDraft {
   note: string;
   occurredAt: string;
 }
+
+export interface ImportPreviewRecord {
+  sourceKey: string;
+  externalId: string | null;
+  title: string;
+  occurredAt: string;
+  updatedAt: string | null;
+  messageCount: number;
+  omittedMessageCount: number;
+  sourceFingerprint: string;
+  preview: string;
+  duplicate: boolean;
+  duplicateRecordId: string | null;
+  parseError: string | null;
+}
+
+export interface ImportPreviewPage {
+  id: string;
+  page: number;
+  pageSize: number;
+  total: number;
+  records: ImportPreviewRecord[];
+}
+
+export interface ResearchRecordContent {
+  recordId: string;
+  content: {
+    version: string;
+    externalId: string | null;
+    title: string;
+    messages: Array<{ id: string | null; role: "user" | "assistant"; text: string; createdAt: string | null }>;
+  };
+  contentHash: string;
+  messageCount: number;
+  omittedMessageCount: number;
+  sourceCreatedAt: string | null;
+  sourceUpdatedAt: string | null;
+}
+
+export interface ResearchImportSession {
+  id: string;
+  sourceFilename: string;
+  status: "committed" | "undone";
+  selectedCount: number;
+  importedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  unclassifiedCount: number;
+  version: number;
+  createdAt: string;
+}

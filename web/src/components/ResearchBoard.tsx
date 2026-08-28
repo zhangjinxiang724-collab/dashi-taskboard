@@ -18,6 +18,7 @@ import {
 } from "../researchTypes";
 import type { Task } from "../types";
 import { TopicDetail } from "./TopicDetail";
+import { ResearchImporter } from "./ResearchImporter";
 import { confidenceLabel, researchStatusLabel, TopicEditor } from "./TopicEditor";
 
 function message(error: unknown) {
@@ -45,6 +46,7 @@ export function ResearchBoard({
   const [editorTopic, setEditorTopic] = useState<Topic | null | undefined>(undefined);
   const [saving, setSaving] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
+  const [showImporter, setShowImporter] = useState(false);
 
   const reload = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -144,7 +146,10 @@ export function ResearchBoard({
           <h1>{text("研究", "Research")}</h1>
           <p>{text("管理那些需要长期思考和持续跟踪的主题。", "Manage topics that need long-term thinking and continued attention.")}</p>
         </div>
-        <button className="button primary" type="button" onClick={() => setEditorTopic(null)}>＋ {text("新建主题", "New topic")}</button>
+        <div className="research-board-actions">
+          <button className="button" type="button" onClick={() => setShowImporter(true)}>{text("导入 ChatGPT 历史", "Import ChatGPT history")}</button>
+          <button className="button primary" type="button" onClick={() => setEditorTopic(null)}>＋ {text("新建主题", "New topic")}</button>
+        </div>
       </div>
       {error && <div className="research-error" role="alert">{error}</div>}
       {loading ? <div className="research-loading">{text("正在读取研究主题…", "Loading research topics…")}</div> : (
@@ -201,6 +206,7 @@ export function ResearchBoard({
           onSave={(draft) => void saveTopic(draft)}
         />
       )}
+      {showImporter && <ResearchImporter topics={topics} onClose={() => setShowImporter(false)} />}
     </section>
   );
 }

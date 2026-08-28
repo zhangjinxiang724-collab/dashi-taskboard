@@ -56,8 +56,10 @@
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
     "smol-toml": "^1.8.0",
+    "stream-json": "3.5.0",
     "unified": "^11.0.5",
-    "ws": "^8.21.3"
+    "ws": "^8.21.3",
+    "yauzl": "3.4.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4",
