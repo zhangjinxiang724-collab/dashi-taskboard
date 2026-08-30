@@ -1,0 +1,124 @@
+import { useEffect, useState } from "react";
+
+import { ApiError } from "../api";
+import {
+  confirmBrowserCapturePreview,
+  getBrowserCapturePreview,
+  listTopics,
+} from "../researchApi";
+import type { BrowserCapturePreview, Topic } from "../researchTypes";
+import { captureReasonLabel } from "../researchCaptureLabels";
+
+function message(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+const relationLabel = {
+  new: "新对话",
+  identical: "已经是最新",
+  append: "发现后续新消息",
+  conflict: "历史内容发生变化",
+} as const;
+
+export function ResearchCapturePreview({ previewId }: { previewId: string }) {
+  const [preview, setPreview] = useState<BrowserCapturePreview | null>(null);
+  const [topics, setTopics] = useState<Topic[]>([]);
+  const [topicId, setTopicId] = useState("");
+  const [allowPartial, setAllowPartial] = useState(false);
+  const [acceptConflict, setAcceptConflict] = useState(false);
+  const [pending, setPending] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    Promise.all([getBrowserCapturePreview(previewId), listTopics(controller.signal)])
+      .then(([nextPreview, nextTopics]) => {
+        setPreview(nextPreview);
+        setTopics(nextTopics);
+        setTopicId(nextPreview.existingRecord?.topicId ?? "");
+      })
+      .catch((loadError) => setError(message(loadError)))
+      .finally(() => setPending(false));
+    return () => controller.abort();
+  }, [previewId]);
+
+  async function confirm() {
+    if (!preview) return;
+    setPending(true);
+    setError(null);
+    try {
+      const saved = await confirmBrowserCapturePreview(preview.id, {
+        topicId: topicId || null,
+        allowPartial,
+        conflictAction: acceptConflict ? "replace-current" : null,
+        expectedRecordVersion: preview.existingRecord?.version ?? null,
+      });
+      setResult(saved.kind === "already_latest"
+        ? "这条对话已经是最新版本，没有重复写入。"
+        : saved.kind === "created"
+          ? `已保存 Research Record，正文版本 ${saved.contentVersion ?? 1}。`
+          : `已安全更新 Research Record，正文版本 ${saved.contentVersion ?? ""}；旧版本仍然保留。`);
+      setPreview((current) => current ? { ...current, status: "committed" } : current);
+    } catch (saveError) {
+      if (saveError instanceof ApiError && saveError.code === "RESEARCH_RECORD_VERSION_CONFLICT") {
+        setError("这条研究记录已在别处更新。请刷新 Preview 后重新确认。");
+      } else {
+        setError(message(saveError));
+      }
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (pending && !preview) return <section className="research-capture-preview"><p>正在读取捕获预览…</p></section>;
+  if (!preview) return <section className="research-capture-preview"><div className="research-error">{error ?? "捕获预览不存在或已经过期。"}</div></section>;
+
+  const partial = preview.completeness === "partial";
+  const conflict = preview.relation === "conflict";
+  const failed = preview.completeness === "failed";
+  const canSave = !failed
+    && (!partial || allowPartial)
+    && (!conflict || acceptConflict)
+    && preview.status !== "committed";
+
+  return (
+    <section className="research-capture-preview">
+      <header>
+        <span>ChatGPT Browser Capture</span>
+        <h1>保存当前研究对话</h1>
+        <p>捕获不等于保存。请确认内容完整性和 Topic 后再写入 Research OS。</p>
+      </header>
+      <article className="research-capture-summary">
+        <div className="research-capture-title">
+          <div><span>当前对话</span><h2>{preview.title}</h2></div>
+          <a href={preview.sourceUrl} target="_blank" rel="noopener noreferrer">打开原对话 ↗</a>
+        </div>
+        <div className="research-capture-facts">
+          <span><small>消息</small><strong>{preview.messageCount} 条</strong></span>
+          <span><small>完整性</small><strong className={`capture-${preview.completeness}`}>{preview.completeness === "complete" ? "✓ 已确认完整" : preview.completeness === "partial" ? "⚠ 可能不完整" : "✕ 捕获失败"}</strong></span>
+          <span><small>判断</small><strong>{preview.relation ? relationLabel[preview.relation] : "正在判断"}</strong></span>
+        </div>
+        {preview.completenessDetails?.reasons.length ? (
+          <div className="research-capture-warning"><strong>为什么不能确认完整</strong><ul>{preview.completenessDetails.reasons.map((reason) => <li key={reason}>{captureReasonLabel(reason)}</li>)}</ul></div>
+        ) : null}
+        {conflict && <div className="research-capture-warning"><strong>不会静默覆盖</strong><p>同一 Conversation 的历史内容发生了非追加变化。保存后会创建新的正文版本，旧版本继续保留。</p></div>}
+        <label className="research-capture-topic">
+          <span>归入 Topic</span>
+          <select value={topicId} onChange={(event) => setTopicId(event.target.value)}>
+            <option value="">暂不分类</option>
+            {topics.map((topic) => <option key={topic.id} value={topic.id}>{topic.title}</option>)}
+          </select>
+        </label>
+        {partial && <label className="research-capture-confirmation"><input type="checkbox" checked={allowPartial} onChange={(event) => setAllowPartial(event.target.checked)} /><span>我知道这份内容可能不完整，仍然保存，并保留完整性标记。</span></label>}
+        {conflict && <label className="research-capture-confirmation"><input type="checkbox" checked={acceptConflict} onChange={(event) => setAcceptConflict(event.target.checked)} /><span>保存为新的当前版本；旧正文版本不得删除。</span></label>}
+        {error && <div className="research-error" role="alert">{error}</div>}
+        {result && <div className="research-import-result"><span>{result}</span></div>}
+        <footer>
+          <button className="button primary" type="button" disabled={!canSave || pending} onClick={() => void confirm()}>{preview.relation === "identical" ? "确认已经是最新" : "确认保存"}</button>
+          <a className="button" href="/">返回 Research OS</a>
+        </footer>
+      </article>
+    </section>
+  );
+}

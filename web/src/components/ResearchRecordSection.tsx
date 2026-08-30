@@ -7,14 +7,14 @@ import {
   deleteResearchRecord,
   listResearchRecords,
   updateResearchRecord,
-  getResearchRecordContent,
 } from "../researchApi";
-import type { ResearchRecord, ResearchRecordContent, ResearchRecordDraft } from "../researchTypes";
+import type { ResearchRecord, ResearchRecordDraft } from "../researchTypes";
 import {
   ResearchRecordEditor,
   researchRecordKindLabel,
   researchRecordProviderLabel,
 } from "./ResearchRecordEditor";
+import { ResearchRecordReader } from "./ResearchRecordReader";
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -35,7 +35,7 @@ export function ResearchRecordSection({ topicId }: { topicId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [editorRecord, setEditorRecord] = useState<ResearchRecord | null | undefined>(undefined);
   const [pending, setPending] = useState(false);
-  const [content, setContent] = useState<ResearchRecordContent | null>(null);
+  const [readerRecord, setReaderRecord] = useState<ResearchRecord | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -132,14 +132,8 @@ export function ResearchRecordSection({ topicId }: { topicId: string }) {
                 {record.note && <p className="research-record-note">{record.note}</p>}
               </div>
               <div className="research-record-actions">
-                {record.captureAdapter === "chatgpt-export-v1" && (
-                  <button type="button" disabled={pending} onClick={() => {
-                    setPending(true);
-                    getResearchRecordContent(record.id)
-                      .then(setContent)
-                      .catch((contentError) => setError(errorMessage(contentError)))
-                      .finally(() => setPending(false));
-                  }}>{text("查看内容", "View content")}</button>
+                {record.captureAdapter !== "manual-v1" && (
+                  <button type="button" disabled={pending} onClick={() => setReaderRecord(record)}>{text("查看内容", "View content")}</button>
                 )}
                 {record.url && (
                   <a href={record.url} target="_blank" rel="noopener noreferrer">{text("打开原对话 ↗", "Open original ↗")}</a>
@@ -164,22 +158,7 @@ export function ResearchRecordSection({ topicId }: { topicId: string }) {
           onSubmit={(draft) => void save(draft)}
         />
       )}
-      {content && (
-        <div className="modal-backdrop research-content-backdrop" role="presentation">
-          <section className="research-content-reader" role="dialog" aria-modal="true" aria-label={text("导入对话内容", "Imported conversation content")}>
-            <header><div><span>ChatGPT</span><h2>{content.content.title}</h2></div><button type="button" onClick={() => setContent(null)} aria-label={text("关闭", "Close")}>×</button></header>
-            <div className="research-content-meta">{content.messageCount} {text("条可见消息", "visible messages")}{content.omittedMessageCount > 0 ? ` · ${content.omittedMessageCount} ${text("条已省略", "omitted")}` : ""}</div>
-            <div className="research-content-messages">
-              {content.content.messages.map((message, index) => (
-                <article key={message.id ?? index} className={`role-${message.role}`}>
-                  <strong>{message.role === "user" ? text("我", "You") : "ChatGPT"}</strong>
-                  <p>{message.text}</p>
-                </article>
-              ))}
-            </div>
-          </section>
-        </div>
-      )}
+      {readerRecord && <ResearchRecordReader record={readerRecord} onClose={() => setReaderRecord(null)} />}
     </section>
   );
 }

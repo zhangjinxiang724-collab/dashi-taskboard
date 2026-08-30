@@ -61,6 +61,7 @@ import {
 import { DashboardView } from "./components/DashboardView";
 import { ProjectReadmeView } from "./components/ProjectReadmeView";
 import { ResearchBoard } from "./components/ResearchBoard";
+import { ResearchCapturePreview } from "./components/ResearchCapturePreview";
 import { IssueListView } from "./components/IssueListView";
 import { JiraConnectionDialog } from "./components/JiraConnectionDialog";
 import { ArchivedTasksColumn, OtherTasksPanel } from "./components/OtherTasksPanel";
@@ -684,6 +685,7 @@ function LocalRealtimeSync({
 
 export function App() {
   const query = useMemo(() => new URL(document.baseURI).searchParams, []);
+  const capturePreviewId = query.get("capturePreview");
   const host = query.get("host");
   const embedded = host === "codex" || host === "workbuddy" || host === "deepseek-harness";
   const undoShortcut = navigator.userAgent.includes("Macintosh") ? "⌘Z" : "Ctrl+Z";
@@ -3601,7 +3603,9 @@ export function App() {
         )}
 
         {workspaceMode === "research" ? (
-          <ResearchBoard onOpenTask={openTaskFromResearch} />
+          capturePreviewId
+            ? <ResearchCapturePreview previewId={capturePreviewId} />
+            : <ResearchBoard onOpenTask={openTaskFromResearch} />
         ) : boardView !== "readme"
           && hasLoadedTasks
           && tasks.length === 0

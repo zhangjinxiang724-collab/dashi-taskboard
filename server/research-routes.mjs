@@ -15,10 +15,16 @@ const TOPIC_TASK_PATH = /^\/api\/research\/topics\/([^/]+)\/tasks\/([^/]+)$/;
 const TOPIC_RECORDS_PATH = /^\/api\/research\/topics\/([^/]+)\/records$/;
 const RESEARCH_RECORD_PATH = /^\/api\/research\/records\/([^/]+)$/;
 const RESEARCH_RECORD_CONTENT_PATH = /^\/api\/research\/records\/([^/]+)\/content$/;
+const RESEARCH_RECORD_CONTENT_VERSIONS_PATH = /^\/api\/research\/records\/([^/]+)\/content-versions$/;
 const IMPORT_PREVIEW_PATH = /^\/api\/research\/imports\/previews\/([^/]+)$/;
 const IMPORT_PREVIEW_CONFIRM_PATH = /^\/api\/research\/imports\/previews\/([^/]+)\/confirm$/;
 const IMPORT_PREVIEW_SELECTION_PATH = /^\/api\/research\/imports\/previews\/([^/]+)\/selection$/;
 const IMPORT_SESSION_UNDO_PATH = /^\/api\/research\/imports\/sessions\/([^/]+)\/undo$/;
+const CAPTURE_CLIENT_PATH = /^\/api\/research\/capture\/clients\/([^/]+)$/;
+const CAPTURE_PREVIEW_PATH = /^\/api\/research\/captures\/browser\/previews\/([^/]+)$/;
+const CAPTURE_PREVIEW_BATCH_PATH = /^\/api\/research\/captures\/browser\/previews\/([^/]+)\/batches$/;
+const CAPTURE_PREVIEW_FINALIZE_PATH = /^\/api\/research\/captures\/browser\/previews\/([^/]+)\/finalize$/;
+const CAPTURE_PREVIEW_CONFIRM_PATH = /^\/api\/research\/captures\/browser\/previews\/([^/]+)\/confirm$/;
 
 function assertPlainObject(value, ApiError) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -309,6 +315,7 @@ export async function handleResearchRequest({
   url,
   research,
   researchImports,
+  researchCaptures,
   readJson,
   sendJson,
   sendEmpty,
@@ -317,6 +324,166 @@ export async function handleResearchRequest({
 }) {
   const pathname = url.pathname;
   if (!pathname.startsWith("/api/research/")) return false;
+
+  if (pathname === "/api/research/capture/pairings/start") {
+    if (request.method !== "POST") {
+      methodNotAllowed(response, ["POST"]);
+      return true;
+    }
+    if ([...url.searchParams.keys()].length > 0) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Pairing does not accept query parameters");
+    sendJson(response, 201, { pairing: researchCaptures.startPairing() });
+    return true;
+  }
+
+  if (pathname === "/api/research/capture/pairings/complete") {
+    if (request.method !== "POST") {
+      methodNotAllowed(response, ["POST"]);
+      return true;
+    }
+    const body = await readJson(request, 64 * 1024, "Pairing request is too large");
+    assertPlainObject(body, ApiError);
+    assertAllowedKeys(body, new Set(["code", "displayName"]), ApiError);
+    const result = researchCaptures.completePairing({
+      code: text(body.code, "code", ApiError, { required: true, maxLength: 100 }),
+      displayName: text(body.displayName ?? "Research OS Chrome", "displayName", ApiError, { required: true, maxLength: 100 }),
+      origin: request.headers.origin,
+    });
+    if (result.kind === "invalid_origin") throw new ApiError(403, "INVALID_EXTENSION_ORIGIN", "Pairing must come from a Chrome extension");
+    if (result.kind === "invalid_code") throw new ApiError(401, "INVALID_PAIRING_CODE", "Pairing code is invalid or expired");
+    sendJson(response, 201, { client: result.client, token: result.token });
+    return true;
+  }
+
+  if (pathname === "/api/research/capture/clients") {
+    if (request.method !== "GET") {
+      methodNotAllowed(response, ["GET"]);
+      return true;
+    }
+    sendJson(response, 200, { clients: research.listCaptureClients() });
+    return true;
+  }
+
+  const captureClientMatch = pathname.match(CAPTURE_CLIENT_PATH);
+  if (captureClientMatch) {
+    if (request.method !== "DELETE") {
+      methodNotAllowed(response, ["DELETE"]);
+      return true;
+    }
+    if (!research.revokeCaptureClient(decodeURIComponent(captureClientMatch[1]))) {
+      throw new ApiError(404, "CAPTURE_CLIENT_NOT_FOUND", "Capture client was not found");
+    }
+    sendEmpty(response, 204);
+    return true;
+  }
+
+  if (pathname === "/api/research/captures/browser/previews") {
+    if (request.method !== "POST") {
+      methodNotAllowed(response, ["POST"]);
+      return true;
+    }
+    const client = researchCaptures.authenticate(request);
+    if (!client) throw new ApiError(401, "CAPTURE_AUTH_REQUIRED", "A paired browser extension is required");
+    const body = await readJson(request, 256 * 1024, "Capture metadata is too large");
+    try {
+      sendJson(response, 201, { preview: researchCaptures.createPreview(client, body) });
+    } catch (error) {
+      throw new ApiError(400, "INVALID_CAPTURE", error instanceof Error ? error.message : "Capture metadata is invalid");
+    }
+    return true;
+  }
+
+  const captureBatchMatch = pathname.match(CAPTURE_PREVIEW_BATCH_PATH);
+  if (captureBatchMatch) {
+    if (request.method !== "POST") {
+      methodNotAllowed(response, ["POST"]);
+      return true;
+    }
+    const client = researchCaptures.authenticate(request);
+    if (!client) throw new ApiError(401, "CAPTURE_AUTH_REQUIRED", "A paired browser extension is required");
+    const body = await readJson(request, 5 * 1024 * 1024, "Capture batch is too large");
+    assertPlainObject(body, ApiError);
+    assertAllowedKeys(body, new Set(["batchIndex", "messages"]), ApiError);
+    try {
+      const batch = researchCaptures.appendBatch(
+        client,
+        decodeURIComponent(captureBatchMatch[1]),
+        body.batchIndex,
+        body.messages,
+      );
+      if (!batch) throw new ApiError(404, "CAPTURE_PREVIEW_NOT_FOUND", "Capture preview expired or was not found");
+      sendJson(response, 201, { batch });
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError(400, "INVALID_CAPTURE_BATCH", error instanceof Error ? error.message : "Capture batch is invalid");
+    }
+    return true;
+  }
+
+  const captureFinalizeMatch = pathname.match(CAPTURE_PREVIEW_FINALIZE_PATH);
+  if (captureFinalizeMatch) {
+    if (request.method !== "POST") {
+      methodNotAllowed(response, ["POST"]);
+      return true;
+    }
+    const client = researchCaptures.authenticate(request);
+    if (!client) throw new ApiError(401, "CAPTURE_AUTH_REQUIRED", "A paired browser extension is required");
+    const body = await readJson(request, 256 * 1024, "Capture result is too large");
+    try {
+      const preview = researchCaptures.finalizePreview(client, decodeURIComponent(captureFinalizeMatch[1]), body);
+      if (!preview) throw new ApiError(404, "CAPTURE_PREVIEW_NOT_FOUND", "Capture preview expired or was not found");
+      sendJson(response, 200, { preview });
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError(400, "INVALID_CAPTURE_RESULT", error instanceof Error ? error.message : "Capture result is invalid");
+    }
+    return true;
+  }
+
+  const captureConfirmMatch = pathname.match(CAPTURE_PREVIEW_CONFIRM_PATH);
+  if (captureConfirmMatch) {
+    if (request.method !== "POST") {
+      methodNotAllowed(response, ["POST"]);
+      return true;
+    }
+    const body = await readJson(request, 64 * 1024, "Capture confirmation is too large");
+    assertPlainObject(body, ApiError);
+    assertAllowedKeys(body, new Set(["topicId", "allowPartial", "conflictAction", "expectedRecordVersion"]), ApiError);
+    const result = researchCaptures.confirmPreview(decodeURIComponent(captureConfirmMatch[1]), {
+      topicId: nullableText(body.topicId, "topicId", ApiError, { maxLength: 100 }),
+      allowPartial: body.allowPartial === true,
+      conflictAction: body.conflictAction === "replace-current" ? "replace-current" : null,
+      expectedRecordVersion: body.expectedRecordVersion === null || body.expectedRecordVersion === undefined
+        ? null
+        : positiveVersion(body.expectedRecordVersion, ApiError),
+    });
+    if (result.kind === "not_found") throw new ApiError(404, "CAPTURE_PREVIEW_NOT_FOUND", "Capture preview expired or was not found");
+    if (result.kind === "partial_confirmation_required") throw new ApiError(409, "PARTIAL_CONFIRMATION_REQUIRED", "Partial capture must be explicitly accepted");
+    if (result.kind === "conflict_confirmation_required") throw new ApiError(409, "CAPTURE_CONFLICT_CONFIRMATION_REQUIRED", "Conflicting content must be explicitly accepted");
+    if (result.kind === "topic_not_found") throw new ApiError(404, "TOPIC_NOT_FOUND", "Topic not found");
+    if (result.kind === "conflict") throw new ApiError(409, "RESEARCH_RECORD_VERSION_CONFLICT", "Research record changed", { currentVersion: result.currentVersion });
+    sendJson(response, result.kind === "created" ? 201 : 200, { result });
+    return true;
+  }
+
+  const capturePreviewMatch = pathname.match(CAPTURE_PREVIEW_PATH);
+  if (capturePreviewMatch) {
+    const previewId = decodeURIComponent(capturePreviewMatch[1]);
+    if (request.method === "GET") {
+      const preview = researchCaptures.getPreview(previewId);
+      if (!preview) throw new ApiError(404, "CAPTURE_PREVIEW_NOT_FOUND", "Capture preview expired or was not found");
+      sendJson(response, 200, { preview });
+      return true;
+    }
+    if (request.method === "DELETE") {
+      const client = researchCaptures.authenticate(request);
+      if (!client) throw new ApiError(401, "CAPTURE_AUTH_REQUIRED", "A paired browser extension is required");
+      if (!researchCaptures.cancelPreview(client, previewId)) throw new ApiError(404, "CAPTURE_PREVIEW_NOT_FOUND", "Capture preview expired or was not found");
+      sendEmpty(response, 204);
+      return true;
+    }
+    methodNotAllowed(response, ["GET", "DELETE"]);
+    return true;
+  }
 
   if (pathname === "/api/research/imports/chatgpt/preview") {
     if (request.method !== "POST") {
@@ -488,10 +655,31 @@ export async function handleResearchRequest({
       methodNotAllowed(response, ["GET"]);
       return true;
     }
-    if ([...url.searchParams.keys()].length > 0) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Record content does not accept query parameters");
-    const content = research.getResearchRecordContent(decodeURIComponent(contentMatch[1]));
+    for (const key of url.searchParams.keys()) {
+      if (key !== "version" || url.searchParams.getAll(key).length !== 1) {
+        throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Record content only accepts one version parameter");
+      }
+    }
+    const rawVersion = url.searchParams.get("version");
+    const version = rawVersion === null ? null : Number(rawVersion);
+    if (version !== null && (!Number.isInteger(version) || version < 1)) {
+      throw new ApiError(400, "INVALID_QUERY_PARAMETER", "version must be a positive integer");
+    }
+    const content = research.getResearchRecordContent(decodeURIComponent(contentMatch[1]), version);
     if (!content) throw new ApiError(404, "RESEARCH_RECORD_CONTENT_NOT_FOUND", "Imported conversation content not found");
     sendJson(response, 200, { content });
+    return true;
+  }
+
+  const contentVersionsMatch = pathname.match(RESEARCH_RECORD_CONTENT_VERSIONS_PATH);
+  if (contentVersionsMatch) {
+    if (request.method !== "GET") {
+      methodNotAllowed(response, ["GET"]);
+      return true;
+    }
+    const versions = research.listResearchRecordContentVersions(decodeURIComponent(contentVersionsMatch[1]));
+    if (!versions) throw new ApiError(404, "RESEARCH_RECORD_NOT_FOUND", "Research record not found");
+    sendJson(response, 200, { versions });
     return true;
   }
 

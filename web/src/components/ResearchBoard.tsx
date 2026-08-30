@@ -19,6 +19,7 @@ import {
 import type { Task } from "../types";
 import { TopicDetail } from "./TopicDetail";
 import { ResearchImporter } from "./ResearchImporter";
+import { BrowserCapturePairing } from "./BrowserCapturePairing";
 import { confidenceLabel, researchStatusLabel, TopicEditor } from "./TopicEditor";
 
 function message(error: unknown) {
@@ -47,6 +48,7 @@ export function ResearchBoard({
   const [saving, setSaving] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [showImporter, setShowImporter] = useState(false);
+  const [showCapturePairing, setShowCapturePairing] = useState(false);
 
   const reload = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -147,6 +149,7 @@ export function ResearchBoard({
           <p>{text("管理那些需要长期思考和持续跟踪的主题。", "Manage topics that need long-term thinking and continued attention.")}</p>
         </div>
         <div className="research-board-actions">
+          <button className="button" type="button" onClick={() => setShowCapturePairing(true)}>{text("连接浏览器扩展", "Connect browser extension")}</button>
           <button className="button" type="button" onClick={() => setShowImporter(true)}>{text("导入 ChatGPT 历史", "Import ChatGPT history")}</button>
           <button className="button primary" type="button" onClick={() => setEditorTopic(null)}>＋ {text("新建主题", "New topic")}</button>
         </div>
@@ -207,6 +210,7 @@ export function ResearchBoard({
         />
       )}
       {showImporter && <ResearchImporter topics={topics} onClose={() => setShowImporter(false)} />}
+      {showCapturePairing && <BrowserCapturePairing onClose={() => setShowCapturePairing(false)} />}
     </section>
   );
 }

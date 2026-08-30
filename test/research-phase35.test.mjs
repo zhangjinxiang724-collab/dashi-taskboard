@@ -262,6 +262,20 @@ test("004 migration backs up a 003 database and preserves Phase 3 records", asyn
   const database = new DatabaseSync(databasePath);
   try {
     database.exec(`
+      DROP INDEX research_record_content_versions_current;
+      DROP INDEX research_record_content_versions_history;
+      DROP INDEX research_capture_clients_active_extension;
+      DROP INDEX research_records_active_chatgpt_external_capture;
+      DROP TABLE research_record_content_versions;
+      DROP TABLE research_capture_clients;
+      ALTER TABLE research_records DROP COLUMN capture_completeness;
+      ALTER TABLE research_records DROP COLUMN last_captured_at;
+      DELETE FROM research_schema_migrations WHERE version = '005_browser_capture';
+      CREATE UNIQUE INDEX research_records_active_provider_external
+        ON research_records(provider, external_id)
+        WHERE deleted_at IS NULL AND external_id IS NOT NULL
+          AND capture_adapter = 'chatgpt-export-v1';
+
       DROP INDEX research_records_active_provider_external;
       DROP INDEX research_records_active_provider_fingerprint;
       DROP INDEX research_records_unclassified_occurred;
@@ -282,9 +296,10 @@ test("004 migration backs up a 003 database and preserves Phase 3 records", asyn
       );
     `);
     const research = new ResearchDatabase(database, { databasePath });
-    assert.deepEqual(research.migrationResult.applied, ["004_chatgpt_historical_import"]);
+    assert.deepEqual(research.migrationResult.applied, ["004_chatgpt_historical_import", "005_browser_capture"]);
     assert.equal(research.getResearchRecord("phase3-record").title, "已有研究记录");
     assert.ok(database.prepare("SELECT 1 FROM research_schema_migrations WHERE version = '004_chatgpt_historical_import'").get());
+    assert.ok(database.prepare("SELECT 1 FROM research_schema_migrations WHERE version = '005_browser_capture'").get());
     assert.ok(database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'research_record_contents'").get());
     assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {

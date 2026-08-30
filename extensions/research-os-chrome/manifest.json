@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Research OS ChatGPT Capture",
+  "version": "0.1.0",
+  "description": "把当前打开的 ChatGPT 对话发送到本机 Research OS Preview。",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["http://127.0.0.1:47823/*"],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "保存到 Research OS",
+    "default_popup": "src/popup/popup.html"
+  }
+}

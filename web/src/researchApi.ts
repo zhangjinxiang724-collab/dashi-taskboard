@@ -12,6 +12,9 @@ import type {
   ImportPreviewPage,
   ResearchImportSession,
   ResearchRecordContent,
+  ResearchRecordContentVersion,
+  BrowserCapturePreview,
+  ResearchCaptureClient,
 } from "./researchTypes";
 
 export async function listTopics(signal?: AbortSignal): Promise<Topic[]> {
@@ -266,7 +269,59 @@ export async function undoResearchImportSession(session: ResearchImportSession) 
   return data.result;
 }
 
-export async function getResearchRecordContent(recordId: string): Promise<ResearchRecordContent> {
-  const data = await request<{ content: ResearchRecordContent }>(`/api/research/records/${encodeURIComponent(recordId)}/content`);
+export async function getResearchRecordContent(recordId: string, version?: number): Promise<ResearchRecordContent> {
+  const query = version ? `?version=${encodeURIComponent(String(version))}` : "";
+  const data = await request<{ content: ResearchRecordContent }>(`/api/research/records/${encodeURIComponent(recordId)}/content${query}`);
   return data.content;
+}
+
+export async function listResearchRecordContentVersions(recordId: string): Promise<ResearchRecordContentVersion[]> {
+  const data = await request<{ versions: ResearchRecordContentVersion[] }>(
+    `/api/research/records/${encodeURIComponent(recordId)}/content-versions`,
+  );
+  return data.versions;
+}
+
+export async function startBrowserCapturePairing(): Promise<{ code: string; expiresAt: string }> {
+  const data = await request<{ pairing: { code: string; expiresAt: string } }>(
+    "/api/research/capture/pairings/start",
+    { method: "POST" },
+  );
+  return data.pairing;
+}
+
+export async function listBrowserCaptureClients(): Promise<ResearchCaptureClient[]> {
+  const data = await request<{ clients: ResearchCaptureClient[] }>("/api/research/capture/clients");
+  return data.clients;
+}
+
+export async function revokeBrowserCaptureClient(id: string): Promise<void> {
+  await request(`/api/research/capture/clients/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function getBrowserCapturePreview(id: string): Promise<BrowserCapturePreview> {
+  const data = await request<{ preview: BrowserCapturePreview }>(
+    `/api/research/captures/browser/previews/${encodeURIComponent(id)}`,
+  );
+  return data.preview;
+}
+
+export async function confirmBrowserCapturePreview(
+  id: string,
+  input: {
+    topicId: string | null;
+    allowPartial: boolean;
+    conflictAction: "replace-current" | null;
+    expectedRecordVersion: number | null;
+  },
+) {
+  const data = await request<{ result: {
+    kind: "created" | "updated" | "already_latest";
+    record: ResearchRecord;
+    contentVersion?: number;
+  } }>(`/api/research/captures/browser/previews/${encodeURIComponent(id)}/confirm`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return data.result;
 }

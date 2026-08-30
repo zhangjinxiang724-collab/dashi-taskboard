@@ -235,13 +235,23 @@ test("Phase 3 migration backs up and preserves a Phase 2 database", async () => 
 
   try {
     const research = new ResearchDatabase(database, { databasePath });
-    assert.deepEqual(research.migrationResult.applied, ["003_research_records", "004_chatgpt_historical_import"]);
+    assert.deepEqual(research.migrationResult.applied, [
+      "003_research_records",
+      "004_chatgpt_historical_import",
+      "005_browser_capture",
+    ]);
     await access(research.migrationResult.backupPath);
     assert.equal(research.getTopic("phase2-topic").currentView, "当前观点");
     assert.equal(research.getTopic("phase2-topic").questions[0].question, "仍需回答的问题");
     assert.deepEqual(
       database.prepare("SELECT version FROM research_schema_migrations ORDER BY version").all().map((row) => row.version),
-      ["001_topic_task_core", "002_topic_current_state", "003_research_records", "004_chatgpt_historical_import"],
+      [
+        "001_topic_task_core",
+        "002_topic_current_state",
+        "003_research_records",
+        "004_chatgpt_historical_import",
+        "005_browser_capture",
+      ],
     );
     assert.ok(database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'research_records'").get());
     assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);

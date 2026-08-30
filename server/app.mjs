@@ -33,6 +33,7 @@ import { createJiraConfigStore } from "./jira-config.mjs";
 import { createJiraIntegration } from "./jira-integration.mjs";
 import { ProjectSummaryService } from "./project-summary.mjs";
 import { ResearchImportService } from "./research-import-service.mjs";
+import { isChromeExtensionOrigin, ResearchCaptureService } from "./research-capture-service.mjs";
 import { handleResearchRequest } from "./research-routes.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -201,7 +202,12 @@ function parseTrustedOrigins(value) {
   return origins;
 }
 
-function assertTrustedNetworkRequest(request, allowOpaqueOrigin = false, trustedOrigins = new Set()) {
+function assertTrustedNetworkRequest(
+  request,
+  allowOpaqueOrigin = false,
+  trustedOrigins = new Set(),
+  allowChromeExtensionOrigin = false,
+) {
   let host;
   try {
     host = new URL(`http://${request.headers.host ?? ""}`).hostname;
@@ -216,6 +222,7 @@ function assertTrustedNetworkRequest(request, allowOpaqueOrigin = false, trusted
   if (!origin) return;
   if (TRUSTED_EMBED_ORIGINS.has(origin)) return;
   if (allowOpaqueOrigin && origin === "null") return;
+  if (allowChromeExtensionOrigin && isChromeExtensionOrigin(origin)) return;
   if (trustedOrigins.has(origin)) return;
   let originHost;
   try {
@@ -1655,6 +1662,7 @@ export function createTaskboardServer(options = {}) {
   const routePrefix = resolved.instanceToken ? `/${resolved.instanceToken}` : "";
   const database = new TaskboardDatabase(resolved.databasePath);
   const researchImports = new ResearchImportService(database.research);
+  const researchCaptures = new ResearchCaptureService(database.research);
   const events = new EventHub();
   let clientStorageWrite = Promise.resolve();
 
@@ -1989,20 +1997,30 @@ export function createTaskboardServer(options = {}) {
         request.url = `${incomingUrl.pathname.slice(routePrefix.length) || "/"}${incomingUrl.search}`;
       }
 
+      const requestPathname = new URL(request.url, "http://127.0.0.1").pathname;
+      const isResearchCaptureRoute = requestPathname.startsWith("/api/research/capture/")
+        || requestPathname.startsWith("/api/research/captures/");
       assertTrustedNetworkRequest(
         request,
         Boolean(resolved.instanceToken),
         resolved.trustedOrigins,
+        isResearchCaptureRoute,
       );
       const origin = request.headers.origin;
       const trustedEmbedOrigin = TRUSTED_EMBED_ORIGINS.has(origin)
         || (Boolean(resolved.instanceToken) && origin === "null");
-      if (trustedEmbedOrigin) {
+      const trustedCaptureOrigin = isResearchCaptureRoute && isChromeExtensionOrigin(origin);
+      if (trustedEmbedOrigin || trustedCaptureOrigin) {
         response.setHeader("access-control-allow-origin", origin);
-        response.setHeader("access-control-allow-methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS");
+        response.setHeader(
+          "access-control-allow-methods",
+          trustedCaptureOrigin ? "GET, POST, DELETE, OPTIONS" : "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS",
+        );
         response.setHeader(
           "access-control-allow-headers",
-          request.headers["access-control-request-headers"] ?? "content-type",
+          trustedCaptureOrigin
+            ? "authorization, content-type"
+            : request.headers["access-control-request-headers"] ?? "content-type",
         );
         response.setHeader("access-control-expose-headers", "x-codex-taskboard-proof");
         response.setHeader("access-control-allow-private-network", "true");
@@ -2025,6 +2043,7 @@ export function createTaskboardServer(options = {}) {
       }
       const url = new URL(request.url, "http://127.0.0.1");
       const pathname = url.pathname;
+      if (isResearchCaptureRoute) assertLoopbackRequest(request);
       const configuredTrustedOrigin = resolved.trustedOrigins.has(origin);
       const isLocalAiRoute = pathname === "/api/local/ai" || pathname.startsWith("/api/local/ai/");
       const isDevelopmentContextsRoute = /^\/api\/projects\/[^/]+\/development-contexts$/.test(pathname);
@@ -2482,6 +2501,7 @@ export function createTaskboardServer(options = {}) {
         url,
         research: database.research,
         researchImports,
+        researchCaptures,
         readJson,
         sendJson,
         sendEmpty,

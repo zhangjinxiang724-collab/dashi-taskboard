@@ -86,6 +86,8 @@ export interface ResearchRecord {
   note: string;
   occurredAt: string;
   captureAdapter: string;
+  captureCompleteness: "complete" | "partial" | null;
+  lastCapturedAt: string | null;
   version: number;
   deletedAt: string | null;
   createdAt: string;
@@ -132,13 +134,87 @@ export interface ResearchRecordContent {
     version: string;
     externalId: string | null;
     title: string;
-    messages: Array<{ id: string | null; role: "user" | "assistant"; text: string; createdAt: string | null }>;
+    messages: Array<{
+      id?: string | null;
+      sourceMessageId?: string | null;
+      role: "user" | "assistant" | "system" | "tool" | "unknown";
+      text?: string;
+      parts?: Array<{
+        type: "text" | "code" | "link" | "media-placeholder";
+        text?: string;
+        language?: string | null;
+        url?: string;
+        label?: string;
+      }>;
+      createdAt?: string | null;
+      occurredAt?: string | null;
+      order?: number;
+    }>;
   };
   contentHash: string;
   messageCount: number;
   omittedMessageCount: number;
   sourceCreatedAt: string | null;
   sourceUpdatedAt: string | null;
+  versionId: string | null;
+  versionNumber: number;
+  captureAdapter: string | null;
+  completeness: "complete" | "partial" | null;
+  completenessDetails: CaptureCompletenessDetails | null;
+  relationToPrevious: "initial" | "identical" | "append" | "conflict" | "legacy" | null;
+  capturedAt: string;
+}
+
+export interface CaptureCompletenessDetails {
+  topBoundaryConfirmed: boolean;
+  stablePasses: number;
+  loadingAbsent: boolean;
+  conversationIdStable: boolean;
+  unresolvedBranches: boolean;
+  unsupportedContentCount: number;
+  reasons: string[];
+}
+
+export interface ResearchRecordContentVersion {
+  id: string;
+  recordId: string;
+  versionNumber: number;
+  captureAdapter: string;
+  completeness: "complete" | "partial";
+  completenessDetails: CaptureCompletenessDetails;
+  relationToPrevious: "initial" | "identical" | "append" | "conflict" | "legacy";
+  contentHash: string;
+  sourceFingerprint: string;
+  messageCount: number;
+  omittedMessageCount: number;
+  sourceCreatedAt: string | null;
+  sourceUpdatedAt: string | null;
+  capturedAt: string;
+  isCurrent: boolean;
+  createdAt: string;
+}
+
+export interface BrowserCapturePreview {
+  id: string;
+  status: "receiving" | "ready" | "failed" | "committed";
+  title: string;
+  sourceUrl: string;
+  capturedAt: string;
+  messageCount: number;
+  completeness: "complete" | "partial" | "failed" | null;
+  completenessDetails: CaptureCompletenessDetails | null;
+  relation: "new" | "identical" | "append" | "conflict" | null;
+  existingRecord: ResearchRecord | null;
+  sourceFingerprint: string | null;
+}
+
+export interface ResearchCaptureClient {
+  id: string;
+  extensionId: string;
+  displayName: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
 }
 
 export interface ResearchImportSession {

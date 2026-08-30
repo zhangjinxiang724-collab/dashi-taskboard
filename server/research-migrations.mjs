@@ -168,6 +168,90 @@ const RESEARCH_MIGRATIONS = [
       `);
     },
   },
+  {
+    version: "005_browser_capture",
+    up(database) {
+      database.exec(`
+        ALTER TABLE research_records ADD COLUMN capture_completeness TEXT
+          CHECK (capture_completeness IS NULL OR capture_completeness IN ('complete', 'partial'));
+        ALTER TABLE research_records ADD COLUMN last_captured_at TEXT;
+
+        CREATE TABLE research_record_content_versions (
+          id TEXT PRIMARY KEY,
+          record_id TEXT NOT NULL REFERENCES research_records(id) ON DELETE CASCADE,
+          version_number INTEGER NOT NULL CHECK (version_number > 0),
+          capture_adapter TEXT NOT NULL,
+          completeness TEXT NOT NULL CHECK (completeness IN ('complete', 'partial')),
+          completeness_details TEXT NOT NULL DEFAULT '{}',
+          relation_to_previous TEXT NOT NULL
+            CHECK (relation_to_previous IN ('initial', 'identical', 'append', 'conflict', 'legacy')),
+          content_encoding TEXT NOT NULL CHECK (content_encoding = 'gzip-json-v1'),
+          content_blob BLOB NOT NULL,
+          content_hash TEXT NOT NULL,
+          source_fingerprint TEXT NOT NULL,
+          message_count INTEGER NOT NULL CHECK (message_count >= 0),
+          omitted_message_count INTEGER NOT NULL DEFAULT 0 CHECK (omitted_message_count >= 0),
+          source_created_at TEXT,
+          source_updated_at TEXT,
+          captured_at TEXT NOT NULL,
+          is_current INTEGER NOT NULL DEFAULT 0 CHECK (is_current IN (0, 1)),
+          created_at TEXT NOT NULL,
+          UNIQUE (record_id, version_number),
+          UNIQUE (record_id, content_hash)
+        );
+
+        CREATE UNIQUE INDEX research_record_content_versions_current
+          ON research_record_content_versions(record_id)
+          WHERE is_current = 1;
+        CREATE INDEX research_record_content_versions_history
+          ON research_record_content_versions(record_id, version_number DESC);
+
+        CREATE TABLE research_capture_clients (
+          id TEXT PRIMARY KEY,
+          extension_id TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          token_hash TEXT NOT NULL UNIQUE,
+          scopes TEXT NOT NULL DEFAULT '["capture"]',
+          created_at TEXT NOT NULL,
+          last_used_at TEXT,
+          revoked_at TEXT
+        );
+
+        CREATE INDEX research_capture_clients_active_extension
+          ON research_capture_clients(extension_id, created_at DESC)
+          WHERE revoked_at IS NULL;
+
+        INSERT INTO research_record_content_versions (
+          id, record_id, version_number, capture_adapter, completeness,
+          completeness_details, relation_to_previous, content_encoding,
+          content_blob, content_hash, source_fingerprint, message_count,
+          omitted_message_count, source_created_at, source_updated_at,
+          captured_at, is_current, created_at
+        )
+        SELECT
+          lower(hex(randomblob(16))), contents.record_id, 1, records.capture_adapter,
+          'partial', '{"reasons":["legacy-content-not-browser-verified"]}', 'legacy',
+          contents.content_encoding, contents.content_blob, contents.content_hash,
+          COALESCE(records.source_fingerprint, contents.content_hash), contents.message_count,
+          contents.omitted_message_count, contents.source_created_at, contents.source_updated_at,
+          contents.created_at, 1, contents.created_at
+        FROM research_record_contents contents
+        JOIN research_records records ON records.id = contents.record_id
+        WHERE contents.deleted_at IS NULL AND records.deleted_at IS NULL;
+
+        UPDATE research_records
+        SET capture_completeness = 'partial', last_captured_at = updated_at
+        WHERE id IN (SELECT record_id FROM research_record_contents WHERE deleted_at IS NULL);
+
+        DROP INDEX research_records_active_provider_external;
+        CREATE UNIQUE INDEX research_records_active_chatgpt_external_capture
+          ON research_records(provider, external_id)
+          WHERE deleted_at IS NULL AND external_id IS NOT NULL
+            AND provider = 'chatgpt'
+            AND capture_adapter IN ('chatgpt-export-v1', 'chatgpt-browser-v1');
+      `);
+    },
+  },
 ];
 
 function appliedVersions(database) {

@@ -1,7 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { gunzipSync } from "node:zlib";
+import { gzipSync, gunzipSync } from "node:zlib";
 
 import { applyResearchMigrations } from "./research-migrations.mjs";
+import {
+  capturedConversationFingerprint,
+  compareCapturedSequences,
+} from "../shared/captured-conversation-domain.mjs";
 
 function now() {
   return new Date().toISOString();
@@ -67,10 +71,39 @@ function researchRecordFromRow(row) {
     note: row.note,
     occurredAt: row.occurred_at,
     captureAdapter: row.capture_adapter,
+    captureCompleteness: row.capture_completeness ?? null,
+    lastCapturedAt: row.last_captured_at ?? null,
     version: row.version,
     deletedAt: row.deleted_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function decodeContentRow(row) {
+  if (!row) return null;
+  const contentBuffer = gunzipSync(row.content_blob);
+  const contentHash = `sha256:${createHash("sha256").update(contentBuffer).digest("hex")}`;
+  if (contentHash !== row.content_hash) {
+    throw new Error(`Research record content failed its integrity check: ${row.record_id}`);
+  }
+  return {
+    recordId: row.record_id,
+    content: JSON.parse(contentBuffer.toString("utf8")),
+    contentHash: row.content_hash,
+    messageCount: row.message_count,
+    omittedMessageCount: row.omitted_message_count,
+    sourceCreatedAt: row.source_created_at,
+    sourceUpdatedAt: row.source_updated_at,
+    versionId: row.version_id ?? null,
+    versionNumber: row.version_number ?? 1,
+    captureAdapter: row.capture_adapter ?? null,
+    completeness: row.completeness ?? null,
+    completenessDetails: row.completeness_details
+      ? JSON.parse(row.completeness_details)
+      : null,
+    relationToPrevious: row.relation_to_previous ?? null,
+    capturedAt: row.captured_at ?? row.created_at,
   };
 }
 
@@ -349,36 +382,248 @@ export class ResearchDatabase {
     `).get(id));
   }
 
-  getResearchRecordContent(id) {
-    const row = this.database.prepare(`
-      SELECT c.* FROM research_record_contents c
-      JOIN research_records r ON r.id = c.record_id
-      WHERE c.record_id = ? AND r.deleted_at IS NULL AND c.deleted_at IS NULL
+  getResearchRecordContent(id, versionNumber = null) {
+    const versionClause = versionNumber === null ? "AND versions.is_current = 1" : "AND versions.version_number = ?";
+    const parameters = versionNumber === null ? [id] : [id, versionNumber];
+    const versionRow = this.database.prepare(`
+      SELECT versions.*, versions.id AS version_id
+      FROM research_record_content_versions versions
+      JOIN research_records records ON records.id = versions.record_id
+      WHERE versions.record_id = ? AND records.deleted_at IS NULL ${versionClause}
+    `).get(...parameters);
+    if (versionRow) return decodeContentRow(versionRow);
+    const legacyRow = this.database.prepare(`
+      SELECT contents.* FROM research_record_contents contents
+      JOIN research_records records ON records.id = contents.record_id
+      WHERE contents.record_id = ? AND records.deleted_at IS NULL AND contents.deleted_at IS NULL
     `).get(id);
-    if (!row) return null;
-    const contentBuffer = gunzipSync(row.content_blob);
-    const contentHash = `sha256:${createHash("sha256").update(contentBuffer).digest("hex")}`;
-    if (contentHash !== row.content_hash) {
-      throw new Error(`Imported research record content failed its integrity check: ${id}`);
-    }
-    return {
+    return decodeContentRow(legacyRow);
+  }
+
+  listResearchRecordContentVersions(id) {
+    if (!this.getResearchRecord(id)) return null;
+    return this.database.prepare(`
+      SELECT id, record_id, version_number, capture_adapter, completeness,
+        completeness_details, relation_to_previous, content_hash, source_fingerprint,
+        message_count, omitted_message_count, source_created_at, source_updated_at,
+        captured_at, is_current, created_at
+      FROM research_record_content_versions
+      WHERE record_id = ?
+      ORDER BY version_number DESC
+    `).all(id).map((row) => ({
+      id: row.id,
       recordId: row.record_id,
-      content: JSON.parse(contentBuffer.toString("utf8")),
+      versionNumber: row.version_number,
+      captureAdapter: row.capture_adapter,
+      completeness: row.completeness,
+      completenessDetails: JSON.parse(row.completeness_details),
+      relationToPrevious: row.relation_to_previous,
       contentHash: row.content_hash,
+      sourceFingerprint: row.source_fingerprint,
       messageCount: row.message_count,
       omittedMessageCount: row.omitted_message_count,
       sourceCreatedAt: row.source_created_at,
       sourceUpdatedAt: row.source_updated_at,
-    };
+      capturedAt: row.captured_at,
+      isCurrent: Boolean(row.is_current),
+      createdAt: row.created_at,
+    }));
   }
 
   findImportedDuplicate(provider, externalId, sourceFingerprint) {
     return this.database.prepare(`
       SELECT id, external_id, source_fingerprint FROM research_records
-      WHERE provider = ? AND deleted_at IS NULL AND capture_adapter = 'chatgpt-export-v1'
+      WHERE provider = ? AND deleted_at IS NULL
+        AND capture_adapter IN ('chatgpt-export-v1', 'chatgpt-browser-v1')
         AND ((? IS NOT NULL AND external_id = ?) OR source_fingerprint = ?)
       LIMIT 1
     `).get(provider, externalId, externalId, sourceFingerprint) ?? null;
+  }
+
+  findCapturedConversation(provider, externalId, sourceFingerprint) {
+    return researchRecordFromRow(this.database.prepare(`
+      SELECT * FROM research_records
+      WHERE provider = ? AND deleted_at IS NULL
+        AND ((? IS NOT NULL AND external_id = ?) OR source_fingerprint = ?)
+      ORDER BY CASE WHEN external_id = ? THEN 0 ELSE 1 END, created_at
+      LIMIT 1
+    `).get(provider, externalId, externalId, sourceFingerprint, externalId));
+  }
+
+  compareCapturedConversation(recordId, conversation) {
+    const current = this.getResearchRecordContent(recordId);
+    if (!current) return "conflict";
+    return compareCapturedSequences(current.content, conversation);
+  }
+
+  createCaptureClient({ extensionId, displayName, tokenHash }) {
+    const timestamp = now();
+    const client = {
+      id: randomUUID(),
+      extensionId,
+      displayName,
+      createdAt: timestamp,
+    };
+    this.database.prepare(`
+      INSERT INTO research_capture_clients (
+        id, extension_id, display_name, token_hash, scopes, created_at, last_used_at, revoked_at
+      ) VALUES (?, ?, ?, ?, '["capture"]', ?, NULL, NULL)
+    `).run(client.id, extensionId, displayName, tokenHash, timestamp);
+    return client;
+  }
+
+  findCaptureClientByTokenHash(tokenHash) {
+    const row = this.database.prepare(`
+      SELECT * FROM research_capture_clients
+      WHERE token_hash = ? AND revoked_at IS NULL
+    `).get(tokenHash);
+    if (!row) return null;
+    return {
+      id: row.id,
+      extensionId: row.extension_id,
+      displayName: row.display_name,
+      createdAt: row.created_at,
+      lastUsedAt: row.last_used_at,
+    };
+  }
+
+  touchCaptureClient(id) {
+    this.database.prepare(`
+      UPDATE research_capture_clients SET last_used_at = ? WHERE id = ? AND revoked_at IS NULL
+    `).run(now(), id);
+  }
+
+  listCaptureClients() {
+    return this.database.prepare(`
+      SELECT id, extension_id, display_name, created_at, last_used_at, revoked_at
+      FROM research_capture_clients ORDER BY created_at DESC
+    `).all().map((row) => ({
+      id: row.id,
+      extensionId: row.extension_id,
+      displayName: row.display_name,
+      createdAt: row.created_at,
+      lastUsedAt: row.last_used_at,
+      revokedAt: row.revoked_at,
+    }));
+  }
+
+  revokeCaptureClient(id) {
+    return this.database.prepare(`
+      UPDATE research_capture_clients SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL
+    `).run(now(), id).changes > 0;
+  }
+
+  commitCapturedConversation({
+    conversation,
+    topicId,
+    completeness,
+    completenessDetails,
+    relation,
+    existingRecordId,
+    expectedRecordVersion,
+  }) {
+    if (topicId && !this.database.prepare("SELECT 1 FROM topics WHERE id = ?").get(topicId)) {
+      return { kind: "topic_not_found" };
+    }
+    if (completeness !== "complete" && completeness !== "partial") {
+      throw new Error("Only complete or explicitly accepted partial captures can be saved");
+    }
+    const timestamp = now();
+    const sourceFingerprint = capturedConversationFingerprint(conversation);
+    const contentBuffer = Buffer.from(JSON.stringify(conversation), "utf8");
+    const contentHash = `sha256:${createHash("sha256").update(contentBuffer).digest("hex")}`;
+    const compressed = gzipSync(contentBuffer);
+    const firstMessageTime = conversation.messages.find((message) => message.occurredAt)?.occurredAt;
+    const recordId = existingRecordId ?? randomUUID();
+    const currentRecord = existingRecordId ? this.getResearchRecord(existingRecordId) : null;
+    if (existingRecordId && !currentRecord) return { kind: "not_found" };
+    if (currentRecord && currentRecord.version !== expectedRecordVersion) {
+      return { kind: "conflict", currentVersion: currentRecord.version };
+    }
+    const nextVersionNumber = currentRecord
+      ? Number(this.database.prepare(`
+        SELECT COALESCE(MAX(version_number), 0) + 1 AS version_number
+        FROM research_record_content_versions WHERE record_id = ?
+      `).get(recordId).version_number)
+      : 1;
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (!currentRecord) {
+        this.database.prepare(`
+          INSERT INTO research_records (
+            id, primary_topic_id, title, provider, kind, url, external_id, summary, note,
+            occurred_at, capture_adapter, version, deleted_at, created_at, updated_at,
+            source_fingerprint, capture_completeness, last_captured_at
+          ) VALUES (?, ?, ?, 'chatgpt', 'chat', ?, ?, '', '', ?, 'chatgpt-browser-v1',
+            1, NULL, ?, ?, ?, ?, ?)
+        `).run(
+          recordId, topicId, conversation.title, conversation.sourceUrl,
+          conversation.externalConversationId, firstMessageTime ?? conversation.capturedAt,
+          timestamp, timestamp, sourceFingerprint, completeness, conversation.capturedAt,
+        );
+      } else {
+        const update = this.database.prepare(`
+          UPDATE research_records
+          SET primary_topic_id = ?, title = ?, url = ?, source_fingerprint = ?,
+            capture_adapter = 'chatgpt-browser-v1', capture_completeness = ?,
+            last_captured_at = ?, updated_at = ?, version = version + 1
+          WHERE id = ? AND version = ? AND deleted_at IS NULL
+        `).run(
+          topicId, conversation.title, conversation.sourceUrl, sourceFingerprint,
+          completeness, conversation.capturedAt, timestamp, recordId, expectedRecordVersion,
+        );
+        if (update.changes === 0) {
+          this.database.exec("ROLLBACK");
+          return { kind: "conflict", currentVersion: this.getResearchRecord(recordId)?.version ?? null };
+        }
+        this.database.prepare(`
+          UPDATE research_record_content_versions SET is_current = 0 WHERE record_id = ? AND is_current = 1
+        `).run(recordId);
+      }
+      this.database.prepare(`
+        INSERT INTO research_record_content_versions (
+          id, record_id, version_number, capture_adapter, completeness,
+          completeness_details, relation_to_previous, content_encoding, content_blob,
+          content_hash, source_fingerprint, message_count, omitted_message_count,
+          source_created_at, source_updated_at, captured_at, is_current, created_at
+        ) VALUES (?, ?, ?, 'chatgpt-browser-v1', ?, ?, ?, 'gzip-json-v1', ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+      `).run(
+        randomUUID(), recordId, nextVersionNumber, completeness,
+        JSON.stringify(completenessDetails), relation, compressed, contentHash,
+        sourceFingerprint, conversation.messages.length,
+        Number(conversation.captureStats?.unsupportedContentCount ?? 0),
+        firstMessageTime ?? null, conversation.capturedAt, conversation.capturedAt, timestamp,
+      );
+      this.database.prepare(`
+        INSERT INTO research_record_contents (
+          record_id, content_encoding, content_blob, content_hash, message_count,
+          source_created_at, source_updated_at, omitted_message_count, deleted_at,
+          created_at, updated_at
+        ) VALUES (?, 'gzip-json-v1', ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+        ON CONFLICT(record_id) DO UPDATE SET
+          content_blob = excluded.content_blob,
+          content_hash = excluded.content_hash,
+          message_count = excluded.message_count,
+          source_created_at = excluded.source_created_at,
+          source_updated_at = excluded.source_updated_at,
+          omitted_message_count = excluded.omitted_message_count,
+          deleted_at = NULL,
+          updated_at = excluded.updated_at
+      `).run(
+        recordId, compressed, contentHash, conversation.messages.length,
+        firstMessageTime ?? null, conversation.capturedAt,
+        Number(conversation.captureStats?.unsupportedContentCount ?? 0), timestamp, timestamp,
+      );
+      this.database.exec("COMMIT");
+      return {
+        kind: currentRecord ? "updated" : "created",
+        record: this.getResearchRecord(recordId),
+        contentVersion: nextVersionNumber,
+      };
+    } catch (error) {
+      try { this.database.exec("ROLLBACK"); } catch {}
+      throw error;
+    }
   }
 
   listUnclassifiedResearchRecords() {

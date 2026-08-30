@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Research OS</title>
+    <link rel="stylesheet" href="./popup.css" />
+  </head>
+  <body>
+    <main>
+      <header><span>Research OS</span><h1>保存当前 ChatGPT 对话</h1></header>
+      <section id="pairing" hidden>
+        <p>先在 Research OS 的“连接浏览器扩展”中生成一次性配对码。</p>
+        <label><span>配对码</span><input id="pairing-code" autocomplete="off" spellcheck="false" /></label>
+        <button id="pair">连接 Research OS</button>
+      </section>
+      <section id="capture" hidden>
+        <div id="status">打开一条 ChatGPT 对话后开始捕获。</div>
+        <div class="progress"><i id="progress-bar"></i></div>
+        <button id="start">捕获当前对话</button>
+        <button id="cancel" class="subtle" hidden>取消捕获</button>
+      </section>
+      <p id="error" role="alert" hidden></p>
+      <footer>支持普通对话和 Project 内对话；只读取你主动打开的当前对话，不读取 Cookie。</footer>
+    </main>
+    <script type="module" src="./popup.ts"></script>
+  </body>
+</html>
