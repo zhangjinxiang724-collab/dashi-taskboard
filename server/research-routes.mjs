@@ -93,6 +93,26 @@ function occurredAt(value, ApiError) {
   return new Date(timestamp).toISOString();
 }
 
+function queryDate(value, field, ApiError, { endOfDay = false } = {}) {
+  if (value === null || value === "") return null;
+  const timestamp = Date.parse(endOfDay && /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? `${value}T23:59:59.999Z`
+    : value);
+  if (!Number.isFinite(timestamp)) {
+    throw new ApiError(400, "INVALID_QUERY_PARAMETER", `${field} must be a valid date`);
+  }
+  return new Date(timestamp).toISOString();
+}
+
+function positiveQueryInteger(value, field, ApiError, { defaultValue, maximum }) {
+  if (value === null || value === "") return defaultValue;
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 1 || number > maximum) {
+    throw new ApiError(400, "INVALID_QUERY_PARAMETER", `${field} must be between 1 and ${maximum}`);
+  }
+  return number;
+}
+
 function externalUrl(value, ApiError) {
   const candidate = nullableText(value, "url", ApiError, { maxLength: 4_000 });
   if (candidate === null) return null;
@@ -631,6 +651,62 @@ export async function handleResearchRequest({
     return true;
   }
 
+  if (pathname === "/api/research/inbox/summary") {
+    if (request.method !== "GET") {
+      methodNotAllowed(response, ["GET"]);
+      return true;
+    }
+    if ([...url.searchParams.keys()].length > 0) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Inbox summary does not accept query parameters");
+    sendJson(response, 200, research.getResearchInboxSummary());
+    return true;
+  }
+
+  if (pathname === "/api/research/inbox") {
+    if (request.method !== "GET") {
+      methodNotAllowed(response, ["GET"]);
+      return true;
+    }
+    const allowed = new Set(["page", "pageSize", "provider", "dateFrom", "dateTo"]);
+    for (const key of url.searchParams.keys()) {
+      if (!allowed.has(key) || url.searchParams.getAll(key).length !== 1) {
+        throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", `Inbox does not accept query parameter: ${key}`);
+      }
+    }
+    const provider = url.searchParams.get("provider");
+    if (provider && !isResearchRecordProvider(provider)) {
+      throw new ApiError(400, "INVALID_QUERY_PARAMETER", "provider is not supported");
+    }
+    const page = positiveQueryInteger(url.searchParams.get("page"), "page", ApiError, { defaultValue: 1, maximum: 1_000_000 });
+    const pageSize = positiveQueryInteger(url.searchParams.get("pageSize"), "pageSize", ApiError, { defaultValue: 50, maximum: 100 });
+    const dateFrom = queryDate(url.searchParams.get("dateFrom"), "dateFrom", ApiError);
+    const dateTo = queryDate(url.searchParams.get("dateTo"), "dateTo", ApiError, { endOfDay: true });
+    if (dateFrom && dateTo && dateFrom > dateTo) {
+      throw new ApiError(400, "INVALID_QUERY_PARAMETER", "dateFrom must not be after dateTo");
+    }
+    sendJson(response, 200, research.listResearchInbox({ page, pageSize, provider: provider || null, dateFrom, dateTo }));
+    return true;
+  }
+
+  if (pathname === "/api/research/inbox/create-topic-and-assign") {
+    if (request.method !== "POST") {
+      methodNotAllowed(response, ["POST"]);
+      return true;
+    }
+    if ([...url.searchParams.keys()].length > 0) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Create topic and assign does not accept query parameters");
+    const body = await readJson(request);
+    assertPlainObject(body, ApiError);
+    assertAllowedKeys(body, new Set(["recordIds", "topic"]), ApiError);
+    if (!Array.isArray(body.recordIds) || body.recordIds.length === 0 || body.recordIds.some((id) => typeof id !== "string" || !id.trim())) {
+      throw new ApiError(400, "INVALID_FIELD", "recordIds must be a non-empty string array");
+    }
+    const result = research.createTopicAndAssignResearchRecords(body.recordIds, parseCreate(body.topic, ApiError));
+    if (result.kind === "records_not_in_inbox") {
+      throw new ApiError(409, "RESEARCH_RECORDS_NOT_IN_INBOX", "One or more records are no longer in the inbox", { recordIds: result.recordIds });
+    }
+    sendJson(response, 201, { topic: result.topic, updated: result.updated });
+    return true;
+  }
+
   if (pathname === "/api/research/records/assign-topic") {
     if (request.method !== "POST") {
       methodNotAllowed(response, ["POST"]);
@@ -645,6 +721,9 @@ export async function handleResearchRequest({
     }
     const result = research.assignResearchRecords(body.recordIds, text(body.topicId, "topicId", ApiError, { required: true, maxLength: 100 }));
     if (result.kind === "topic_not_found") throw new ApiError(404, "TOPIC_NOT_FOUND", "Topic not found");
+    if (result.kind === "records_not_in_inbox") {
+      throw new ApiError(409, "RESEARCH_RECORDS_NOT_IN_INBOX", "One or more records are no longer in the inbox", { recordIds: result.recordIds });
+    }
     sendJson(response, 200, { updated: result.updated });
     return true;
   }

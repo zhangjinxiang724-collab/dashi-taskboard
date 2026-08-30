@@ -1,19 +1,16 @@
 import { useEffect, useState } from "react";
 
 import {
-  assignResearchRecordsToTopic,
   confirmResearchImport,
   createChatGptImportPreview,
   getImportPreview,
   getSelectableImportPreviewKeys,
   listResearchImportSessions,
-  listUnclassifiedResearchRecords,
   undoResearchImportSession,
 } from "../researchApi";
 import type {
   ImportPreviewRecord,
   ResearchImportSession,
-  ResearchRecord,
   Topic,
 } from "../researchTypes";
 
@@ -21,8 +18,8 @@ function message(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function ResearchImporter({ topics, onClose }: { topics: Topic[]; onClose: () => void }) {
-  const [tab, setTab] = useState<"import" | "unclassified" | "history">("import");
+export function ResearchImporter({ topics, onClose, onOpenInbox }: { topics: Topic[]; onClose: () => void; onOpenInbox: () => void }) {
+  const [tab, setTab] = useState<"import" | "history">("import");
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [records, setRecords] = useState<ImportPreviewRecord[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -32,14 +29,13 @@ export function ResearchImporter({ topics, onClose }: { topics: Topic[]; onClose
   const [duplicates, setDuplicates] = useState<"all" | "only" | "exclude">("exclude");
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
-  const [unclassified, setUnclassified] = useState<ResearchRecord[]>([]);
-  const [unclassifiedSelected, setUnclassifiedSelected] = useState<Set<string>>(new Set());
   const [sessions, setSessions] = useState<ResearchImportSession[]>([]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [latestSessionId, setLatestSessionId] = useState<string | null>(null);
   const [finalPreview, setFinalPreview] = useState(false);
+  const [inboxAdded, setInboxAdded] = useState(0);
 
   async function loadPreview(id = previewId, nextPage = page) {
     if (!id) return;
@@ -50,7 +46,6 @@ export function ResearchImporter({ topics, onClose }: { topics: Topic[]; onClose
   }
 
   useEffect(() => {
-    if (tab === "unclassified") void listUnclassifiedResearchRecords().then(setUnclassified).catch((loadError) => setError(message(loadError)));
     if (tab === "history") void listResearchImportSessions().then(setSessions).catch((loadError) => setError(message(loadError)));
   }, [tab]);
 
@@ -87,6 +82,7 @@ export function ResearchImporter({ topics, onClose }: { topics: Topic[]; onClose
       })));
       setResult(`导入完成：新增 ${imported.imported}，跳过重复 ${imported.skipped}，失败 ${imported.failed}，待归类 ${imported.unclassified}。`);
       setLatestSessionId(imported.sessionId);
+      setInboxAdded(imported.unclassified);
       setSelected(new Set());
       setFinalPreview(false);
       await loadPreview(previewId, page);
@@ -120,21 +116,6 @@ export function ResearchImporter({ topics, onClose }: { topics: Topic[]; onClose
     });
   }
 
-  async function assignUnclassified() {
-    if (!topicId || unclassifiedSelected.size === 0) return;
-    setPending(true);
-    try {
-      const count = await assignResearchRecordsToTopic([...unclassifiedSelected], topicId);
-      setResult(`已将 ${count} 条研究记录归入所选主题。`);
-      setUnclassified((current) => current.filter((record) => !unclassifiedSelected.has(record.id)));
-      setUnclassifiedSelected(new Set());
-    } catch (assignError) {
-      setError(message(assignError));
-    } finally {
-      setPending(false);
-    }
-  }
-
   async function undo(session: ResearchImportSession) {
     if (!window.confirm("撤销只会移除这个批次创建、且之后没有被编辑或关联任务的记录。继续吗？")) return;
     setPending(true);
@@ -158,11 +139,11 @@ export function ResearchImporter({ topics, onClose }: { topics: Topic[]; onClose
         </header>
         <nav aria-label="导入管理">
           <button className={tab === "import" ? "active" : ""} type="button" onClick={() => setTab("import")}>选择性导入</button>
-          <button className={tab === "unclassified" ? "active" : ""} type="button" onClick={() => setTab("unclassified")}>待归类</button>
+          <button type="button" onClick={onOpenInbox}>待整理记录</button>
           <button className={tab === "history" ? "active" : ""} type="button" onClick={() => setTab("history")}>导入历史</button>
         </nav>
         {error && <div className="research-error" role="alert">{error}</div>}
-        {result && <div className="research-import-result"><span>{result}</span>{latestSessionId && <button type="button" onClick={() => setTab("history")}>查看 Import Session 与撤销</button>}</div>}
+        {result && <div className="research-import-result"><span>{result}</span>{inboxAdded > 0 && <button type="button" onClick={onOpenInbox}>前往待整理记录</button>}{latestSessionId && <button type="button" onClick={() => setTab("history")}>查看 Import Session 与撤销</button>}</div>}
 
         {tab === "import" && <div className="research-import-body">
           <div className="research-import-safety">
@@ -207,12 +188,6 @@ export function ResearchImporter({ topics, onClose }: { topics: Topic[]; onClose
             <dl><div><dt>来源</dt><dd>ChatGPT 官方导出</dd></div><div><dt>正文</dt><dd>独立压缩保存</dd></div><div><dt>重复项</dt><dd>确认时再次校验并跳过</dd></div></dl>
             <footer><button type="button" onClick={() => setFinalPreview(false)}>返回调整</button><button className="button primary" disabled={pending} onClick={() => void confirm()}>最终确认导入</button></footer>
           </div>}
-        </div>}
-
-        {tab === "unclassified" && <div className="research-import-body">
-          <p className="research-import-intro">先保存、后整理。这里的记录尚未归入任何 Topic。</p>
-          <div className="research-import-list">{unclassified.map((record) => <label key={record.id}><input type="checkbox" checked={unclassifiedSelected.has(record.id)} onChange={(event) => setUnclassifiedSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(record.id); else next.delete(record.id); return next; })} /><span><strong>{record.title}</strong><small>{new Date(record.occurredAt).toLocaleDateString()} · ChatGPT</small></span></label>)}</div>
-          <footer className="research-import-footer"><span>已选 {unclassifiedSelected.size} 条</span><select value={topicId} onChange={(event) => setTopicId(event.target.value)}><option value="">选择 Topic…</option>{topics.map((topic) => <option key={topic.id} value={topic.id}>{topic.title}</option>)}</select><button className="button primary" disabled={!topicId || !unclassifiedSelected.size || pending} onClick={() => void assignUnclassified()}>批量归类</button></footer>
         </div>}
 
         {tab === "history" && <div className="research-import-body"><div className="research-import-history">{sessions.map((session) => <article key={session.id}><div><strong>{session.sourceFilename}</strong><span>{new Date(session.createdAt).toLocaleString()} · 导入 {session.importedCount} · 跳过 {session.skippedCount}</span></div><span>{session.status === "undone" ? "已撤销" : "已完成"}</span>{session.status === "committed" && <button disabled={pending} onClick={() => void undo(session)}>安全撤销</button>}</article>)}</div></div>}

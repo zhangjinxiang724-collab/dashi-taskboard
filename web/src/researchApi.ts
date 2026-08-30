@@ -15,6 +15,7 @@ import type {
   ResearchRecordContentVersion,
   BrowserCapturePreview,
   ResearchCaptureClient,
+  ResearchInboxPage,
 } from "./researchTypes";
 
 export async function listTopics(signal?: AbortSignal): Promise<Topic[]> {
@@ -249,11 +250,40 @@ export async function listUnclassifiedResearchRecords(): Promise<ResearchRecord[
   return data.records;
 }
 
+export async function getResearchInboxSummary(signal?: AbortSignal): Promise<number> {
+  const data = await request<{ count: number }>("/api/research/inbox/summary", { signal });
+  return data.count;
+}
+
+export async function listResearchInbox(
+  options: { page?: number; pageSize?: number; provider?: string; dateFrom?: string; dateTo?: string } = {},
+  signal?: AbortSignal,
+): Promise<ResearchInboxPage> {
+  const query = new URLSearchParams();
+  if (options.page) query.set("page", String(options.page));
+  if (options.pageSize) query.set("pageSize", String(options.pageSize));
+  if (options.provider) query.set("provider", options.provider);
+  if (options.dateFrom) query.set("dateFrom", options.dateFrom);
+  if (options.dateTo) query.set("dateTo", options.dateTo);
+  const suffix = query.size ? `?${query}` : "";
+  return request<ResearchInboxPage>(`/api/research/inbox${suffix}`, { signal });
+}
+
 export async function assignResearchRecordsToTopic(recordIds: string[], topicId: string): Promise<number> {
   const data = await request<{ updated: number }>("/api/research/records/assign-topic", {
     method: "POST", body: JSON.stringify({ recordIds, topicId }),
   });
   return data.updated;
+}
+
+export async function createTopicAndAssignResearchRecords(
+  recordIds: string[],
+  topic: Pick<TopicDraft, "title" | "status">,
+): Promise<{ topic: Topic; updated: number }> {
+  return request<{ topic: Topic; updated: number }>("/api/research/inbox/create-topic-and-assign", {
+    method: "POST",
+    body: JSON.stringify({ recordIds, topic }),
+  });
 }
 
 export async function listResearchImportSessions(): Promise<ResearchImportSession[]> {

@@ -5,6 +5,7 @@ import { ApiError, listTasks } from "../api";
 import { useTaskboardI18n } from "../i18n";
 import {
   createTopic,
+  getResearchInboxSummary,
   getTopic,
   listTopics,
   updateTopic,
@@ -20,6 +21,7 @@ import type { Task } from "../types";
 import { TopicDetail } from "./TopicDetail";
 import { ResearchImporter } from "./ResearchImporter";
 import { BrowserCapturePairing } from "./BrowserCapturePairing";
+import { ResearchInbox } from "./ResearchInbox";
 import { confidenceLabel, researchStatusLabel, TopicEditor } from "./TopicEditor";
 
 function message(error: unknown) {
@@ -49,17 +51,23 @@ export function ResearchBoard({
   const [editorError, setEditorError] = useState<string | null>(null);
   const [showImporter, setShowImporter] = useState(false);
   const [showCapturePairing, setShowCapturePairing] = useState(false);
+  const [view, setView] = useState<"topics" | "inbox">(() => (
+    new URL(document.baseURI).searchParams.get("researchView") === "inbox" ? "inbox" : "topics"
+  ));
+  const [inboxCount, setInboxCount] = useState(0);
 
   const reload = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setError(null);
     try {
-      const [nextTopics, nextTasks] = await Promise.all([
+      const [nextTopics, nextTasks, nextInboxCount] = await Promise.all([
         listTopics(signal),
         listTasks(undefined, signal),
+        getResearchInboxSummary(signal),
       ]);
       setTopics(nextTopics);
       setAllTasks(nextTasks);
+      setInboxCount(nextInboxCount);
     } catch (loadError) {
       if ((loadError as Error).name !== "AbortError") setError(message(loadError));
     } finally {
@@ -83,6 +91,12 @@ export function ResearchBoard({
   function replaceTopicDetail(topic: TopicDetailType) {
     replaceTopic(topic);
     setSelectedTopic(topic);
+  }
+
+  function upsertTopic(topic: Topic) {
+    setTopics((current) => current.some((candidate) => candidate.id === topic.id)
+      ? current.map((candidate) => candidate.id === topic.id ? topic : candidate)
+      : [topic, ...current]);
   }
 
   async function openTopic(id: string) {
@@ -154,8 +168,12 @@ export function ResearchBoard({
           <button className="button primary" type="button" onClick={() => setEditorTopic(null)}>＋ {text("新建主题", "New topic")}</button>
         </div>
       </div>
+      <nav className="research-primary-views" aria-label={text("研究工作视图", "Research work views")}>
+        <button className={view === "topics" ? "active" : ""} type="button" onClick={() => setView("topics")}>{text("主题", "Topics")}</button>
+        <button className={view === "inbox" ? "active" : ""} type="button" onClick={() => setView("inbox")}>{text("待整理记录", "Inbox records")} <span>{inboxCount}</span></button>
+      </nav>
       {error && <div className="research-error" role="alert">{error}</div>}
-      {loading ? <div className="research-loading">{text("正在读取研究主题…", "Loading research topics…")}</div> : (
+      {view === "inbox" ? <ResearchInbox topics={topics} onCountChange={setInboxCount} onTopicCreated={upsertTopic} /> : loading ? <div className="research-loading">{text("正在读取研究主题…", "Loading research topics…")}</div> : (
         <div className="research-topic-groups">
           {RESEARCH_STATUSES.map((status) => {
             const statusTopics = topics.filter((topic) => topic.status === status);
@@ -209,7 +227,7 @@ export function ResearchBoard({
           onSave={(draft) => void saveTopic(draft)}
         />
       )}
-      {showImporter && <ResearchImporter topics={topics} onClose={() => setShowImporter(false)} />}
+      {showImporter && <ResearchImporter topics={topics} onClose={() => setShowImporter(false)} onOpenInbox={() => { setShowImporter(false); setView("inbox"); }} />}
       {showCapturePairing && <BrowserCapturePairing onClose={() => setShowCapturePairing(false)} />}
     </section>
   );

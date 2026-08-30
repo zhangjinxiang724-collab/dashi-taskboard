@@ -107,6 +107,31 @@ function decodeContentRow(row) {
   };
 }
 
+function compactPreview(value, maxLength = 240) {
+  const normalized = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return "";
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength).trimEnd()}…`
+    : normalized;
+}
+
+function contentPreview(content) {
+  for (const message of content?.content?.messages ?? []) {
+    if (typeof message.text === "string") {
+      const preview = compactPreview(message.text);
+      if (preview) return preview;
+    }
+    for (const part of message.parts ?? []) {
+      if (part.type !== "text" || typeof part.text !== "string") continue;
+      const preview = compactPreview(part.text);
+      if (preview) return preview;
+    }
+  }
+  return "";
+}
+
 export class ResearchDatabase {
   constructor(database, { databasePath } = {}) {
     this.database = database;
@@ -634,25 +659,117 @@ export class ResearchDatabase {
     `).all().map(researchRecordFromRow);
   }
 
+  getResearchInboxSummary() {
+    const row = this.database.prepare(`
+      SELECT COUNT(*) AS count
+      FROM research_records
+      WHERE primary_topic_id IS NULL AND deleted_at IS NULL
+    `).get();
+    return { count: Number(row.count) };
+  }
+
+  listResearchInbox({ page = 1, pageSize = 50, provider = null, dateFrom = null, dateTo = null } = {}) {
+    const conditions = ["primary_topic_id IS NULL", "deleted_at IS NULL"];
+    const parameters = [];
+    if (provider) {
+      conditions.push("provider = ?");
+      parameters.push(provider);
+    }
+    if (dateFrom) {
+      conditions.push("occurred_at >= ?");
+      parameters.push(dateFrom);
+    }
+    if (dateTo) {
+      conditions.push("occurred_at <= ?");
+      parameters.push(dateTo);
+    }
+    const where = conditions.join(" AND ");
+    const total = Number(this.database.prepare(`
+      SELECT COUNT(*) AS count FROM research_records WHERE ${where}
+    `).get(...parameters).count);
+    const rows = this.database.prepare(`
+      SELECT * FROM research_records
+      WHERE ${where}
+      ORDER BY occurred_at DESC, created_at DESC, id DESC
+      LIMIT ? OFFSET ?
+    `).all(...parameters, pageSize, (page - 1) * pageSize);
+    const records = rows.map((row) => {
+      const record = researchRecordFromRow(row);
+      const content = this.getResearchRecordContent(record.id);
+      return {
+        ...record,
+        preview: compactPreview(record.summary) || contentPreview(content) || compactPreview(record.note),
+        contentAvailable: content !== null,
+        messageCount: content?.messageCount ?? 0,
+      };
+    });
+    return { total, page, pageSize, records };
+  }
+
   assignResearchRecords(recordIds, topicId) {
     if (!this.database.prepare("SELECT 1 FROM topics WHERE id = ?").get(topicId)) {
       return { kind: "topic_not_found" };
     }
     const uniqueIds = [...new Set(recordIds)];
     const timestamp = now();
-    const update = this.database.prepare(`
-      UPDATE research_records
-      SET primary_topic_id = ?, version = version + 1, updated_at = ?
-      WHERE id = ? AND deleted_at IS NULL
-    `);
     this.database.exec("BEGIN IMMEDIATE");
     try {
-      let updated = 0;
-      for (const id of uniqueIds) updated += update.run(topicId, timestamp, id).changes;
+      const inboxRecord = this.database.prepare(`
+        SELECT 1 FROM research_records
+        WHERE id = ? AND primary_topic_id IS NULL AND deleted_at IS NULL
+      `);
+      const invalidRecordIds = uniqueIds.filter((id) => !inboxRecord.get(id));
+      if (invalidRecordIds.length > 0) {
+        this.database.exec("ROLLBACK");
+        return { kind: "records_not_in_inbox", recordIds: invalidRecordIds };
+      }
+      const update = this.database.prepare(`
+        UPDATE research_records
+        SET primary_topic_id = ?, version = version + 1, updated_at = ?
+        WHERE id = ? AND primary_topic_id IS NULL AND deleted_at IS NULL
+      `);
+      for (const id of uniqueIds) {
+        if (update.run(topicId, timestamp, id).changes !== 1) {
+          throw new Error(`Research inbox record changed while assigning: ${id}`);
+        }
+      }
       this.database.exec("COMMIT");
-      return { kind: "updated", updated };
+      return { kind: "updated", updated: uniqueIds.length };
     } catch (error) {
       this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  createTopicAndAssignResearchRecords(recordIds, topicInput) {
+    const uniqueIds = [...new Set(recordIds)];
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const topic = this.createTopic(topicInput);
+      const inboxRecord = this.database.prepare(`
+        SELECT 1 FROM research_records
+        WHERE id = ? AND primary_topic_id IS NULL AND deleted_at IS NULL
+      `);
+      const invalidRecordIds = uniqueIds.filter((id) => !inboxRecord.get(id));
+      if (invalidRecordIds.length > 0) {
+        this.database.exec("ROLLBACK");
+        return { kind: "records_not_in_inbox", recordIds: invalidRecordIds };
+      }
+      const timestamp = now();
+      const update = this.database.prepare(`
+        UPDATE research_records
+        SET primary_topic_id = ?, version = version + 1, updated_at = ?
+        WHERE id = ? AND primary_topic_id IS NULL AND deleted_at IS NULL
+      `);
+      for (const id of uniqueIds) {
+        if (update.run(topic.id, timestamp, id).changes !== 1) {
+          throw new Error(`Research inbox record changed while creating its topic: ${id}`);
+        }
+      }
+      this.database.exec("COMMIT");
+      return { kind: "created", topic, updated: uniqueIds.length };
+    } catch (error) {
+      try { this.database.exec("ROLLBACK"); } catch {}
       throw error;
     }
   }

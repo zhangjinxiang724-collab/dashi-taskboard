@@ -105,6 +105,19 @@ export interface ResearchRecordDraft {
   occurredAt: string;
 }
 
+export interface ResearchInboxItem extends ResearchRecord {
+  preview: string;
+  contentAvailable: boolean;
+  messageCount: number;
+}
+
+export interface ResearchInboxPage {
+  total: number;
+  page: number;
+  pageSize: number;
+  records: ResearchInboxItem[];
+}
+
 export interface ImportPreviewRecord {
   sourceKey: string;
   externalId: string | null;

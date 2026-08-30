@@ -29,6 +29,7 @@ export function ResearchCapturePreview({ previewId }: { previewId: string }) {
   const [pending, setPending] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
+  const [savedToInbox, setSavedToInbox] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -54,10 +55,13 @@ export function ResearchCapturePreview({ previewId }: { previewId: string }) {
         conflictAction: acceptConflict ? "replace-current" : null,
         expectedRecordVersion: preview.existingRecord?.version ?? null,
       });
+      setSavedToInbox(!topicId && saved.kind !== "already_latest");
       setResult(saved.kind === "already_latest"
         ? "这条对话已经是最新版本，没有重复写入。"
         : saved.kind === "created"
-          ? `已保存 Research Record，正文版本 ${saved.contentVersion ?? 1}。`
+          ? !topicId
+            ? `已保存到待整理记录，正文版本 ${saved.contentVersion ?? 1}。`
+            : `已保存 Research Record，正文版本 ${saved.contentVersion ?? 1}。`
           : `已安全更新 Research Record，正文版本 ${saved.contentVersion ?? ""}；旧版本仍然保留。`);
       setPreview((current) => current ? { ...current, status: "committed" } : current);
     } catch (saveError) {
@@ -113,7 +117,7 @@ export function ResearchCapturePreview({ previewId }: { previewId: string }) {
         {partial && <label className="research-capture-confirmation"><input type="checkbox" checked={allowPartial} onChange={(event) => setAllowPartial(event.target.checked)} /><span>我知道这份内容可能不完整，仍然保存，并保留完整性标记。</span></label>}
         {conflict && <label className="research-capture-confirmation"><input type="checkbox" checked={acceptConflict} onChange={(event) => setAcceptConflict(event.target.checked)} /><span>保存为新的当前版本；旧正文版本不得删除。</span></label>}
         {error && <div className="research-error" role="alert">{error}</div>}
-        {result && <div className="research-import-result"><span>{result}</span></div>}
+        {result && <div className="research-import-result"><span>{result}</span>{savedToInbox && <a href="/?researchView=inbox">前往研究收件箱</a>}</div>}
         <footer>
           <button className="button primary" type="button" disabled={!canSave || pending} onClick={() => void confirm()}>{preview.relation === "identical" ? "确认已经是最新" : "确认保存"}</button>
           <a className="button" href="/">返回 Research OS</a>
