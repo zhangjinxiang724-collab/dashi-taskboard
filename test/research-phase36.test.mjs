@@ -46,6 +46,14 @@ function message(order, role, text) {
   };
 }
 
+function windowMessages(from, to) {
+  return Array.from({ length: to - from + 1 }, (_, offset) => ({
+    ...message(from + offset, (from + offset) % 2 ? "user" : "assistant", `消息 ${from + offset}`),
+    order: offset,
+    occurredAt: null,
+  }));
+}
+
 function metadata(externalConversationId = "conversation-1") {
   return {
     schemaVersion: "captured-conversation-v1",
@@ -63,12 +71,29 @@ const completeEvidence = {
   completeness: "complete",
   completenessDetails: {
     topBoundaryConfirmed: true,
+    windowTopConfirmed: true,
+    conversationRootConfirmed: true,
+    earliestBoundaryConfirmed: true,
+    latestBoundaryConfirmed: true,
     stablePasses: 3,
     loadingAbsent: true,
     conversationIdStable: true,
     unresolvedBranches: false,
+    messageOmissionCount: 0,
+    unsupportedContentCounts: {},
     unsupportedContentCount: 0,
     reasons: [],
+    passiveDataAvailable: true,
+    hasPreviousPageFinal: false,
+    passiveHistoryExhausted: true,
+    activeLeafConfirmed: true,
+    missingParentCount: 0,
+    cycleCount: 0,
+    parentConflictCount: 0,
+    pageDataConflictCount: 0,
+    firstUserConfirmed: true,
+    domUnmatchedCount: 0,
+    domFingerprintMismatchCount: 0,
   },
 };
 
@@ -139,7 +164,7 @@ test("browser capture pairs with exact extension origin and preserves append/con
 
   const appendedMessages = [...firstMessages, message(2, "user", "再检查协同效应兑现节奏。")];
   const appended = await createCapture(baseUrl, token, metadata(), appendedMessages);
-  assert.equal(appended.relation, "append");
+  assert.equal(appended.relation, "safe_merge");
   const appendConfirm = await request(baseUrl, `/api/research/captures/browser/previews/${appended.id}/confirm`, {
     method: "POST",
     body: { topicId: topic.id, expectedRecordVersion: record.version },
@@ -181,6 +206,7 @@ test("browser capture pairs with exact extension origin and preserves append/con
   const versions = await request(baseUrl, `/api/research/records/${record.id}/content-versions`);
   assert.deepEqual(versions.body.versions.map((version) => version.versionNumber), [3, 2, 1]);
   assert.deepEqual(versions.body.versions.map((version) => version.relationToPrevious), ["conflict", "append", "initial"]);
+  assert.equal(versions.body.versions[1].completenessDetails.coverageRelation, "safe_merge");
   const historical = await request(baseUrl, `/api/research/records/${record.id}/content?version=1`);
   assert.equal(historical.body.content.content.messages[0].parts[0].text, firstMessages[0].parts[0].text);
   const current = await request(baseUrl, `/api/research/records/${record.id}/content`);
@@ -191,6 +217,65 @@ test("browser capture pairs with exact extension origin and preserves append/con
   assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
   assert.equal(database.prepare("SELECT COUNT(*) AS count FROM research_record_content_versions WHERE record_id = ?").get(record.id).count, 3);
   database.close();
+});
+
+test("overlapping partial browser windows persist one merged canonical version", async () => {
+  const { baseUrl } = await startServer();
+  const { token } = await pair(baseUrl);
+  const partialLatest = {
+    completeness: "partial",
+    completenessDetails: {
+      topBoundaryConfirmed: false,
+      earliestBoundaryConfirmed: false,
+      latestBoundaryConfirmed: true,
+      stablePasses: 0,
+      loadingAbsent: true,
+      conversationIdStable: true,
+      unresolvedBranches: false,
+      messageOmissionCount: 0,
+      unsupportedContentCounts: {},
+      unsupportedContentCount: 0,
+      reasons: ["earliest-boundary-unconfirmed"],
+    },
+  };
+  const partialEarlier = {
+    ...partialLatest,
+    completenessDetails: {
+      ...partialLatest.completenessDetails,
+      latestBoundaryConfirmed: false,
+      reasons: ["earliest-boundary-unconfirmed", "latest-boundary-unconfirmed"],
+    },
+  };
+  const first = await createCapture(baseUrl, token, metadata("overlap-conversation"), windowMessages(50, 100), partialLatest);
+  const firstConfirm = await request(baseUrl, `/api/research/captures/browser/previews/${first.id}/confirm`, {
+    method: "POST", body: { topicId: null, allowPartial: true },
+  });
+  assert.equal(firstConfirm.response.status, 201, JSON.stringify(firstConfirm.body));
+  const record = firstConfirm.body.result.record;
+
+  const second = await createCapture(baseUrl, token, metadata("overlap-conversation"), windowMessages(30, 70), partialEarlier);
+  assert.equal(second.relation, "safe_merge");
+  assert.deepEqual(second.coverage, {
+    existingMessageCount: 51,
+    incomingMessageCount: 41,
+    mergedMessageCount: 71,
+    newCoverageMessageCount: 20,
+    earliestBoundaryConfirmed: false,
+    latestBoundaryConfirmed: true,
+  });
+  const secondConfirm = await request(baseUrl, `/api/research/captures/browser/previews/${second.id}/confirm`, {
+    method: "POST",
+    body: { topicId: null, allowPartial: true, expectedRecordVersion: record.version },
+  });
+  assert.equal(secondConfirm.response.status, 200, JSON.stringify(secondConfirm.body));
+  assert.equal(secondConfirm.body.result.contentVersion, 2);
+
+  const current = await request(baseUrl, `/api/research/records/${record.id}/content`);
+  assert.equal(current.body.content.messageCount, 71);
+  assert.equal(current.body.content.content.messages[0].sourceMessageId, "message-30");
+  assert.equal(current.body.content.content.messages.at(-1).sourceMessageId, "message-100");
+  assert.equal(current.body.content.completeness, "partial");
+  assert.equal(current.body.content.completenessDetails.coverageRelation, "safe_merge");
 });
 
 test("server downgrades unverifiable captures to partial and requires explicit acceptance", async () => {
@@ -230,4 +315,40 @@ test("server downgrades unverifiable captures to partial and requires explicit a
     method: "POST", headers, body: metadata("revoked-client"),
   });
   assert.equal(afterRevoke.response.status, 401);
+});
+
+test("browser window top cannot be used as conversation root evidence", async () => {
+  const { baseUrl } = await startServer();
+  const { token } = await pair(baseUrl);
+  const windowOnlyEvidence = {
+    completeness: "complete",
+    completenessDetails: {
+      topBoundaryConfirmed: true,
+      windowTopConfirmed: true,
+      conversationRootConfirmed: false,
+      earliestBoundaryConfirmed: true,
+      latestBoundaryConfirmed: true,
+      stablePasses: 3,
+      loadingAbsent: true,
+      conversationIdStable: true,
+      unresolvedBranches: false,
+      messageOmissionCount: 0,
+      unsupportedContentCounts: {},
+      unsupportedContentCount: 0,
+      reasons: [],
+    },
+  };
+  const preview = await createCapture(
+    baseUrl,
+    token,
+    metadata("window-top-is-not-root"),
+    [message(0, "user", "窗口顶部不是整场会话的根节点。")],
+    windowOnlyEvidence,
+  );
+  assert.equal(preview.completeness, "partial");
+  assert.equal(preview.completenessDetails.windowTopConfirmed, true);
+  assert.equal(preview.completenessDetails.conversationRootConfirmed, false);
+  assert.equal(preview.completenessDetails.earliestBoundaryConfirmed, false);
+  assert.ok(preview.completenessDetails.reasons.includes("earliest-boundary-unconfirmed"));
+  assert.ok(preview.completenessDetails.reasons.includes("complete-evidence-insufficient"));
 });

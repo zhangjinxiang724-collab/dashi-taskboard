@@ -1,4 +1,4 @@
-import type { CapturedMessage, CapturedPart } from "../model/captured-conversation";
+import type { CapturedMessage, CapturedPart, ContentStructureProfile } from "../model/captured-conversation";
 
 const MESSAGE_SELECTORS = [
   "[data-message-author-role]",
@@ -62,23 +62,84 @@ function contentRoot(node: HTMLElement) {
   return node.querySelector<HTMLElement>("[data-message-content], .markdown, [class*='markdown']") ?? node;
 }
 
-function partsOf(node: HTMLElement): { parts: CapturedPart[]; unsupported: number } {
+type UnsupportedContentType = NonNullable<CapturedPart["mediaType"]>;
+
+function unsupportedTypeOf(element: Element): UnsupportedContentType {
+  const tag = element.tagName.toLowerCase();
+  if (tag === "img") return "image";
+  if (tag === "video") return "video";
+  if (tag === "audio") return "audio";
+  if (tag === "canvas") return "canvas";
+  const signature = `${element.getAttribute("data-testid") ?? ""} ${element.className ?? ""}`.toLowerCase();
+  if (/file|attachment/.test(signature)) return "file";
+  if (/tool|research-progress|canvas/.test(signature)) return "tool-ui";
+  return "unknown";
+}
+
+function comparisonTextOf(node: HTMLElement) {
+  const clone = contentRoot(node).cloneNode(true) as HTMLElement;
+  clone.querySelectorAll([
+    "button", "nav", "svg", "style", "script", "[aria-hidden='true']",
+    ".sr-only", "[class*='sr-only']", "[class*='visually-hidden']",
+    "[data-testid*='citation']", "[class*='citation']", "sup a[href]",
+  ].join(", ")).forEach((element) => element.remove());
+  clone.querySelectorAll<HTMLElement>("img, video, audio, canvas").forEach((element) => {
+    const label = element.getAttribute("alt") || element.getAttribute("aria-label") || "";
+    element.replaceWith(label ? document.createTextNode(label) : document.createTextNode(""));
+  });
+  return normalizeText(clone.textContent ?? "");
+}
+
+function structureOf(node: HTMLElement): ContentStructureProfile {
   const root = contentRoot(node);
+  const text = root.textContent ?? "";
+  const count = (selector: string) => root.querySelectorAll(selector).length;
+  return {
+    heading: count("h1, h2, h3, h4, h5, h6"),
+    boldItalic: count("strong, b, em, i"),
+    inlineCode: [...root.querySelectorAll("code")].filter((element) => !element.closest("pre")).length,
+    codeBlock: count("pre"),
+    link: count("a[href]"),
+    citation: count("[data-testid*='citation'], [class*='citation'], sup a[href]"),
+    blockquote: count("blockquote"),
+    listItem: count("li"),
+    table: count("table"),
+    math: count("math, .katex, [data-math], [class*='math']"),
+    htmlEntity: /&(?:#\d+|#x[0-9a-f]+|\w+);/i.test(text) ? 1 : 0,
+    unicode: /[^\x00-\x7F]/.test(text) ? 1 : 0,
+    toolCard: count("[data-testid*='tool'], [data-testid*='research-progress'], [class*='tool-call']"),
+    hiddenUi: count("[aria-hidden='true'], .sr-only, [class*='sr-only'], [class*='visually-hidden']"),
+    unknownRich: count("canvas, iframe, object, embed"),
+  };
+}
+
+function partsOf(node: HTMLElement): { parts: CapturedPart[]; comparisonText: string; unsupportedContentCounts: Record<UnsupportedContentType, number> } {
+  const root = contentRoot(node);
+  const comparisonText = comparisonTextOf(node);
   const clone = root.cloneNode(true) as HTMLElement;
-  clone.querySelectorAll("button, nav, svg, style, script, [aria-hidden='true']").forEach((element) => element.remove());
   const parts: CapturedPart[] = [];
   clone.querySelectorAll("pre").forEach((pre) => {
     const text = normalizeText(pre.textContent ?? "");
     if (text) parts.push({ type: "code", text, language: pre.querySelector("code")?.className.match(/language-([^ ]+)/)?.[1] ?? null });
     pre.remove();
   });
-  let unsupported = 0;
-  clone.querySelectorAll("img, video, audio, canvas, [data-testid*='file'], [class*='attachment']").forEach((media) => {
-    unsupported += 1;
-    const label = media.getAttribute("alt") || media.getAttribute("aria-label") || "未捕获的媒体或附件";
-    parts.push({ type: "media-placeholder", label: normalizeText(label) });
+  const unsupportedContentCounts: Record<UnsupportedContentType, number> = {
+    image: 0, video: 0, audio: 0, file: 0, canvas: 0, "tool-ui": 0, unknown: 0,
+  };
+  const unsupportedCandidates = [...clone.querySelectorAll(
+    "img, video, audio, canvas, [data-testid*='file'], [class*='attachment'], [data-testid*='tool'], [data-testid*='research-progress'], [class*='tool-call']",
+  )].filter((candidate, index, candidates) => (
+    !candidates.some((parent, parentIndex) => parentIndex !== index && parent.contains(candidate))
+  ));
+  unsupportedCandidates.forEach((media) => {
+    const mediaType = unsupportedTypeOf(media);
+    unsupportedContentCounts[mediaType] += 1;
+    const fallback = mediaType === "tool-ui" ? "未完整保存的工具界面" : "未完整保存的媒体或附件";
+    const label = media.getAttribute("alt") || media.getAttribute("aria-label") || fallback;
+    parts.push({ type: "media-placeholder", label: normalizeText(label), mediaType });
     media.remove();
   });
+  clone.querySelectorAll("button, nav, svg, style, script, [aria-hidden='true']").forEach((element) => element.remove());
   clone.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((link) => {
     const text = normalizeText(link.textContent ?? "");
     try {
@@ -93,14 +154,18 @@ function partsOf(node: HTMLElement): { parts: CapturedPart[]; unsupported: numbe
   });
   const text = normalizeText(clone.textContent ?? "");
   if (text) parts.unshift({ type: "text", text });
-  return { parts, unsupported };
+  return { parts, comparisonText, unsupportedContentCounts };
 }
 
 export function collectVisibleMessages() {
-  let unsupportedContentCount = 0;
+  const unsupportedContentCounts: Record<UnsupportedContentType, number> = {
+    image: 0, video: 0, audio: 0, file: 0, canvas: 0, "tool-ui": 0, unknown: 0,
+  };
   const messages = messageNodes().map((node, order) => {
-    const { parts, unsupported } = partsOf(node);
-    unsupportedContentCount += unsupported;
+    const { parts, comparisonText, unsupportedContentCounts: messageUnsupported } = partsOf(node);
+    for (const type of Object.keys(unsupportedContentCounts) as UnsupportedContentType[]) {
+      unsupportedContentCounts[type] += messageUnsupported[type];
+    }
     const role = roleOf(node);
     const sourceMessageId = node.dataset.messageId
       ?? node.getAttribute("data-message-id")
@@ -113,9 +178,15 @@ export function collectVisibleMessages() {
       occurredAt: null,
       parts,
       fingerprint: fastFingerprint(signature),
+      comparisonText,
+      diagnosticStructure: structureOf(node),
     } satisfies CapturedMessage;
   }).filter((message) => message.parts.length > 0);
-  return { messages, unsupportedContentCount };
+  return {
+    messages,
+    unsupportedContentCounts,
+    unsupportedContentCount: Object.values(unsupportedContentCounts).reduce((sum, count) => sum + count, 0),
+  };
 }
 
 export function findScrollContainer(): HTMLElement {

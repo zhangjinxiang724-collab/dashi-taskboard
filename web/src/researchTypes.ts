@@ -158,6 +158,7 @@ export interface ResearchRecordContent {
         language?: string | null;
         url?: string;
         label?: string;
+        mediaType?: "image" | "video" | "audio" | "file" | "canvas" | "tool-ui" | "unknown";
       }>;
       createdAt?: string | null;
       occurredAt?: string | null;
@@ -180,12 +181,97 @@ export interface ResearchRecordContent {
 
 export interface CaptureCompletenessDetails {
   topBoundaryConfirmed: boolean;
+  windowTopConfirmed?: boolean;
+  conversationRootConfirmed?: boolean;
+  earliestBoundaryConfirmed?: boolean;
+  latestBoundaryConfirmed?: boolean;
   stablePasses: number;
   loadingAbsent: boolean;
   conversationIdStable: boolean;
   unresolvedBranches: boolean;
+  messageOmissionCount?: number;
+  unsupportedContentCounts?: Partial<Record<"image" | "video" | "audio" | "file" | "canvas" | "tool-ui" | "unknown", number>>;
+  coverageRelation?: "safe_merge";
+  coverage?: {
+    messageCount: number;
+    earliestMessageId: string | null;
+    latestMessageId: string | null;
+    earliestBoundaryConfirmed: boolean;
+    latestBoundaryConfirmed: boolean;
+    captureCompleteness: "complete" | "partial";
+    captureSource: string;
+    capturedAt: string | null;
+  };
   unsupportedContentCount: number;
   reasons: string[];
+  passiveDataAvailable?: boolean;
+  initialPassiveNodeCount?: number;
+  historyPagesLoaded?: number;
+  passiveNodeProgression?: number[];
+  finalGraphNodeCount?: number;
+  visibleMessageCount?: number;
+  hasPreviousPageFinal?: boolean | null;
+  passiveHistoryExhausted?: boolean;
+  passiveHistoryStalled?: boolean;
+  paginationLoopDetected?: boolean;
+  activeLeafConfirmed?: boolean;
+  activePathLength?: number;
+  missingParentCount?: number;
+  cycleCount?: number;
+  parentConflictCount?: number;
+  pageDataConflictCount?: number;
+  firstUserConfirmed?: boolean;
+  domMatchedCount?: number;
+  domUnmatchedCount?: number;
+  domFingerprintMismatchCount?: number;
+  domFormattingOnlyMismatchCount?: number;
+  domCitationOnlyMismatchCount?: number;
+  domToolUiOnlyMismatchCount?: number;
+  domRealTextMismatchCount?: number;
+  activeBranchUniquelyValidated?: boolean;
+  orderedVisibleIdentityStable?: boolean;
+  textTranscriptComplete?: boolean;
+  richContentComplete?: boolean;
+  visibleConversationComplete?: boolean;
+  passiveCaptureDurationMs?: number;
+  fallbackUsed?: boolean;
+  orderedHistoryAudit?: {
+    pageOrderRule: "capture-sequence-newest-to-oldest";
+    pageOrderValidated: boolean;
+    pageTimeOrderViolationCount: number;
+    itemOrderRule: "oldest-to-newest" | "newest-to-oldest" | "unresolved";
+    itemOrderValidated: boolean;
+    timestampAscendingPairs: number;
+    timestampDescendingPairs: number;
+    parentForwardLinks: number;
+    parentBackwardLinks: number;
+    pageSummaries: Array<{ responseSequence: number; cursorHash: string; hasPreviousPage: boolean | null; itemCount: number; collection: "messages" | "mapping" }>;
+    orderedUniqueNodeCount: number;
+    unpagedNodeCount: number;
+    roleCounts: Record<"user" | "assistant" | "thoughts" | "tool" | "system" | "internal" | "unknown", number>;
+    hasVisibleContentNodeCount: number;
+    visibleMessageCount: number;
+    visibleToolMessageCount: number;
+    firstVisibleUserFound: boolean;
+    graphBranchPointCount: number;
+    visibleBranchPointCount: number;
+    branchScoped: boolean | null;
+    domVisibleCount: number;
+    domMatchedCount: number;
+    domUnmatchedCount: number;
+    domOrderingMismatchCount: number;
+    domFingerprintMismatchCount: number;
+    domFormattingOnlyMismatchCount: number;
+    domCitationOnlyMismatchCount: number;
+    domToolUiOnlyMismatchCount: number;
+    domRealTextMismatchCount: number;
+    mismatchCategories: Record<"plainText" | "markdownHeading" | "boldItalic" | "inlineCode" | "codeBlock" | "markdownLink" | "citation" | "list" | "blockquote" | "table" | "math" | "unicodeEntity" | "whitespaceNewline" | "toolPlaceholder" | "other", number>;
+    domCompactMatchCount: number;
+    domContainsStreamCount: number;
+    streamContainsDomCount: number;
+    domContiguous: boolean;
+    buildDurationMs: number;
+  };
 }
 
 export interface ResearchRecordContentVersion {
@@ -214,11 +300,28 @@ export interface BrowserCapturePreview {
   sourceUrl: string;
   capturedAt: string;
   messageCount: number;
+  messages?: Array<{
+    order: number;
+    role: "user" | "assistant" | "system" | "tool" | "unknown";
+    sourceMessageId: string | null;
+    occurredAt: string | null;
+    parts: Array<{ type: "text" | "code" | "link" | "media-placeholder"; text?: string; language?: string | null; url?: string; label?: string }>;
+    fingerprint: string;
+  }>;
   completeness: "complete" | "partial" | "failed" | null;
   completenessDetails: CaptureCompletenessDetails | null;
-  relation: "new" | "identical" | "append" | "conflict" | null;
+  relation: "new" | "identical" | "append" | "safe_merge" | "conflict" | null;
   existingRecord: ResearchRecord | null;
   sourceFingerprint: string | null;
+  coverage?: {
+    existingMessageCount: number;
+    incomingMessageCount: number;
+    mergedMessageCount: number;
+    newCoverageMessageCount: number;
+    earliestBoundaryConfirmed: boolean;
+    latestBoundaryConfirmed: boolean;
+  } | null;
+  conflictReason?: string | null;
 }
 
 export interface ResearchCaptureClient {

@@ -8,6 +8,7 @@ section { display: grid; gap: 12px; }
 p { margin: 0; color: #65655f; font-size: 12px; line-height: 1.55; }
 label { display: grid; gap: 6px; color: #55554f; font-size: 11px; }
 input { height: 36px; padding: 0 10px; border: 1px solid #d9d9d4; border-radius: 7px; background: white; font: 600 14px ui-monospace, monospace; letter-spacing: .05em; }
+#base-url { font: 12px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; letter-spacing: 0; }
 button { min-height: 36px; border: 1px solid #1e1e1c; border-radius: 7px; background: #1e1e1c; color: white; font-weight: 600; cursor: pointer; }
 button.subtle { border-color: #d9d9d4; background: transparent; color: #55554f; }
 button:disabled { cursor: default; opacity: .45; }
@@ -15,4 +16,7 @@ button:disabled { cursor: default; opacity: .45; }
 .progress { height: 3px; overflow: hidden; border-radius: 2px; background: #e8e8e3; }
 .progress i { display: block; width: 0; height: 100%; background: #2f7d4d; transition: width .25s ease; }
 #error { margin-top: 12px; color: #a32118; }
+details { margin-top: 14px; padding-top: 10px; border-top: 1px solid #e8e8e3; }
+details[open] { display: grid; gap: 10px; }
+summary { color: #777771; font-size: 11px; cursor: pointer; }
 footer { display: block; margin-top: 16px; padding-top: 12px; border-top: 1px solid #e8e8e3; }

@@ -2,7 +2,11 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { useTaskboardI18n } from "../i18n";
 import { getResearchRecordContent, listResearchRecordContentVersions } from "../researchApi";
-import { captureReasonLabel } from "../researchCaptureLabels";
+import {
+  captureCompletenessPresentation,
+  captureReasonLabel,
+  unsupportedContentLabels,
+} from "../researchCaptureLabels";
 import type { ResearchRecord, ResearchRecordContent, ResearchRecordContentVersion } from "../researchTypes";
 import { researchRecordKindLabel, researchRecordProviderLabel } from "./ResearchRecordEditor";
 
@@ -15,6 +19,13 @@ function sourceLabel(record: ResearchRecord) {
   if (record.captureAdapter === "chatgpt-export-v1") return "历史导入";
   if (record.captureAdapter === "manual-v1") return "手动记录";
   return record.captureAdapter;
+}
+
+function versionSourceLabel(version: ResearchRecordContentVersion) {
+  if (version.completenessDetails?.coverageRelation === "safe_merge") return "渐进合并";
+  if (version.captureAdapter === "chatgpt-export-v1") return "ChatGPT 导出";
+  if (version.captureAdapter === "chatgpt-browser-v1") return "浏览器捕获";
+  return version.captureAdapter;
 }
 
 export function ResearchRecordReader({
@@ -67,6 +78,9 @@ export function ResearchRecordReader({
     }
   }
 
+  const resolvedCompleteness = content?.completeness ?? record.captureCompleteness;
+  const completeness = captureCompletenessPresentation(resolvedCompleteness ?? null, content?.completenessDetails);
+
   return (
     <div className="modal-backdrop research-content-backdrop" role="presentation">
       <section className="research-content-reader" role="dialog" aria-modal="true" aria-label={text("研究记录正文", "Research record content")}>
@@ -80,9 +94,9 @@ export function ResearchRecordReader({
         </header>
         <div className="research-content-meta">
           <time dateTime={record.occurredAt}>{new Date(record.occurredAt).toLocaleString()}</time>
-          {content && <span>{content.messageCount} {text("条可见消息", "visible messages")}{content.omittedMessageCount > 0 ? ` · ${content.omittedMessageCount} ${text("条已省略", "omitted")}` : ""}</span>}
-          {(content?.completeness ?? record.captureCompleteness) && <strong className={`capture-${content?.completeness ?? record.captureCompleteness}`}>{(content?.completeness ?? record.captureCompleteness) === "complete" ? "✓ 已确认完整" : "⚠ 可能不完整"}</strong>}
-          {versions.length > 1 && content && <label>{text("正文版本", "Content version")}<select value={content.versionNumber} disabled={loading} onChange={(event) => void selectVersion(Number(event.target.value))}>{versions.map((version) => <option key={version.id} value={version.versionNumber}>版本 {version.versionNumber} · {version.messageCount} 条 · {version.completeness === "complete" ? "完整" : "可能不完整"}{version.isCurrent ? " · 当前" : ""}</option>)}</select></label>}
+          {content && <span>已保存 {content.messageCount} 条文本消息</span>}
+          {resolvedCompleteness && <strong className={`capture-${resolvedCompleteness}`}>{completeness.overallLabel}</strong>}
+          {versions.length > 1 && content && <label>{text("正文版本", "Content version")}<select value={content.versionNumber} disabled={loading} onChange={(event) => void selectVersion(Number(event.target.value))}>{versions.map((version) => <option key={version.id} value={version.versionNumber}>版本 {version.versionNumber} · {versionSourceLabel(version)} · {version.messageCount} 条 · {version.completeness === "complete" ? "完整" : "部分完整"}{version.isCurrent ? " · 当前" : ""}</option>)}</select></label>}
           {record.url && <a href={record.url} target="_blank" rel="noopener noreferrer">{text("打开原始内容 ↗", "Open original ↗")}</a>}
         </div>
         {actions && <div className="research-reader-actions">{actions}</div>}
@@ -93,7 +107,20 @@ export function ResearchRecordReader({
           {record.note && <section><span>{text("备注", "Note")}</span><p>{record.note}</p></section>}
           {!record.summary && !record.note && <p>{text("这条记录暂时没有可阅读的正文。", "This record does not have readable content yet.")}</p>}
         </div> : null}
-        {content?.completeness === "partial" && content.completenessDetails?.reasons.length ? <div className="research-capture-warning"><strong>这份正文可能不完整</strong><ul>{content.completenessDetails.reasons.map((reason) => <li key={reason}>{captureReasonLabel(reason)}</li>)}</ul></div> : null}
+        {content?.completenessDetails ? <div className="research-reader-coverage">
+          <strong>完整性</strong>
+          <span className={content.completenessDetails.textTranscriptComplete ? "capture-complete" : "capture-partial"}>文字问答：{completeness.textLabel}</span>
+          <span className={content.completenessDetails.richContentComplete ? "capture-complete" : "capture-partial"}>富媒体：{completeness.richLabel}</span>
+          <span>文本消息：{content.messageCount} 条</span>
+          <span>当前捕获窗口顶部{content.completenessDetails.windowTopConfirmed ?? content.completenessDetails.topBoundaryConfirmed ? "已稳定" : "未稳定"}</span>
+          <span>对话根节点{content.completenessDetails.conversationRootConfirmed ? "已确认" : "未确认"}</span>
+          <span>最新边界{content.completenessDetails.latestBoundaryConfirmed ? "已确认" : "未确认"}</span>
+          {Number(content.completenessDetails.messageOmissionCount ?? 0) > 0 ? <span>消息正文遗漏 {content.completenessDetails.messageOmissionCount} 条</span> : null}
+          {Object.entries(content.completenessDetails.unsupportedContentCounts ?? {}).filter(([, count]) => Number(count) > 0).map(([type, count]) => (
+            <span key={type}>{unsupportedContentLabels[type] ?? "其他内容"}未完整保存：{Number(count)}</span>
+          ))}
+        </div> : null}
+        {content?.completeness === "partial" && content.completenessDetails?.reasons.length ? <div className="research-capture-warning"><strong>{completeness.partialHeading}</strong><ul>{content.completenessDetails.reasons.map((reason) => <li key={reason}>{captureReasonLabel(reason)}</li>)}</ul></div> : null}
         {content && <div className="research-content-messages">
           {content.content.messages.map((message, index) => (
             <article key={message.id ?? message.sourceMessageId ?? index} className={`role-${message.role}`}>

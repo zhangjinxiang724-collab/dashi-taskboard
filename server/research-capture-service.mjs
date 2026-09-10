@@ -3,6 +3,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   CAPTURE_SCHEMA_VERSION,
   CHATGPT_BROWSER_ADAPTER,
+  captureCoverage,
   capturedConversationFingerprint,
 } from "../shared/captured-conversation-domain.mjs";
 
@@ -56,7 +57,12 @@ function partIsValid(part) {
       && part.text.length > 0
       && (part.language === undefined || part.language === null || typeof part.language === "string");
   }
-  if (part.type === "media-placeholder") return typeof part.label === "string" && part.label.length > 0;
+  if (part.type === "media-placeholder") {
+    return typeof part.label === "string"
+      && part.label.length > 0
+      && (part.mediaType === undefined
+        || ["image", "video", "audio", "file", "canvas", "tool-ui", "unknown"].includes(part.mediaType));
+  }
   if (part.type !== "link" || typeof part.text !== "string" || typeof part.url !== "string") return false;
   try {
     const url = new URL(part.url);
@@ -67,11 +73,24 @@ function partIsValid(part) {
 }
 
 function completenessIsProven(details) {
-  return details?.topBoundaryConfirmed === true
-    && Number(details?.stablePasses) >= 3
+  return details?.conversationRootConfirmed === true
+    && details?.earliestBoundaryConfirmed === true
+    && details?.latestBoundaryConfirmed === true
+    && details?.passiveDataAvailable === true
+    && details?.passiveHistoryExhausted === true
+    && details?.hasPreviousPageFinal === false
+    && details?.activeLeafConfirmed === true
+    && Number(details?.missingParentCount ?? 0) === 0
+    && Number(details?.cycleCount ?? 0) === 0
+    && Number(details?.parentConflictCount ?? 0) === 0
+    && Number(details?.pageDataConflictCount ?? 0) === 0
+    && details?.firstUserConfirmed === true
+    && Number(details?.domUnmatchedCount ?? 0) === 0
+    && Number(details?.domFingerprintMismatchCount ?? 0) === 0
     && details?.loadingAbsent === true
     && details?.conversationIdStable === true
     && details?.unresolvedBranches === false
+    && Number(details?.messageOmissionCount ?? 0) === 0
     && Number(details?.unsupportedContentCount ?? 0) === 0
     && Array.isArray(details?.reasons)
     && details.reasons.length === 0;
@@ -175,18 +194,162 @@ export class ResearchCaptureService {
       preview.finalized = { completeness: "failed", reasons: ["no-stable-message-sequence"] };
       return this.publicPreview(preview);
     }
+    const declaredUnsupported = input?.completenessDetails?.unsupportedContentCounts;
+    const orderedAuditInput = input?.completenessDetails?.orderedHistoryAudit;
+    const orderedHistoryAudit = orderedAuditInput && typeof orderedAuditInput === "object" ? {
+      pageOrderRule: orderedAuditInput.pageOrderRule === "capture-sequence-newest-to-oldest"
+        ? orderedAuditInput.pageOrderRule : "capture-sequence-newest-to-oldest",
+      pageOrderValidated: orderedAuditInput.pageOrderValidated === true,
+      pageTimeOrderViolationCount: Math.max(0, Number(orderedAuditInput.pageTimeOrderViolationCount ?? 0)),
+      itemOrderRule: ["oldest-to-newest", "newest-to-oldest", "unresolved"].includes(orderedAuditInput.itemOrderRule)
+        ? orderedAuditInput.itemOrderRule : "unresolved",
+      itemOrderValidated: orderedAuditInput.itemOrderValidated === true,
+      timestampAscendingPairs: Math.max(0, Number(orderedAuditInput.timestampAscendingPairs ?? 0)),
+      timestampDescendingPairs: Math.max(0, Number(orderedAuditInput.timestampDescendingPairs ?? 0)),
+      parentForwardLinks: Math.max(0, Number(orderedAuditInput.parentForwardLinks ?? 0)),
+      parentBackwardLinks: Math.max(0, Number(orderedAuditInput.parentBackwardLinks ?? 0)),
+      pageSummaries: Array.isArray(orderedAuditInput.pageSummaries) ? orderedAuditInput.pageSummaries.slice(0, 100).map((page) => ({
+        responseSequence: Math.max(0, Number(page?.responseSequence ?? 0)),
+        cursorHash: typeof page?.cursorHash === "string" && /^(?:session:[a-f0-9]{8}|none)$/.test(page.cursorHash) ? page.cursorHash : "none",
+        hasPreviousPage: typeof page?.hasPreviousPage === "boolean" ? page.hasPreviousPage : null,
+        itemCount: Math.max(0, Number(page?.itemCount ?? 0)),
+        collection: page?.collection === "mapping" ? "mapping" : "messages",
+      })) : [],
+      orderedUniqueNodeCount: Math.max(0, Number(orderedAuditInput.orderedUniqueNodeCount ?? 0)),
+      unpagedNodeCount: Math.max(0, Number(orderedAuditInput.unpagedNodeCount ?? 0)),
+      roleCounts: Object.fromEntries(["user", "assistant", "thoughts", "tool", "system", "internal", "unknown"].map((role) => [
+        role, Math.max(0, Number(orderedAuditInput.roleCounts?.[role] ?? 0)),
+      ])),
+      hasVisibleContentNodeCount: Math.max(0, Number(orderedAuditInput.hasVisibleContentNodeCount ?? 0)),
+      visibleMessageCount: Math.max(0, Number(orderedAuditInput.visibleMessageCount ?? 0)),
+      visibleToolMessageCount: Math.max(0, Number(orderedAuditInput.visibleToolMessageCount ?? 0)),
+      firstVisibleUserFound: orderedAuditInput.firstVisibleUserFound === true,
+      graphBranchPointCount: Math.max(0, Number(orderedAuditInput.graphBranchPointCount ?? 0)),
+      visibleBranchPointCount: Math.max(0, Number(orderedAuditInput.visibleBranchPointCount ?? 0)),
+      branchScoped: typeof orderedAuditInput.branchScoped === "boolean" ? orderedAuditInput.branchScoped : null,
+      domVisibleCount: Math.max(0, Number(orderedAuditInput.domVisibleCount ?? 0)),
+      domMatchedCount: Math.max(0, Number(orderedAuditInput.domMatchedCount ?? 0)),
+      domUnmatchedCount: Math.max(0, Number(orderedAuditInput.domUnmatchedCount ?? 0)),
+      domOrderingMismatchCount: Math.max(0, Number(orderedAuditInput.domOrderingMismatchCount ?? 0)),
+      domFingerprintMismatchCount: Math.max(0, Number(orderedAuditInput.domFingerprintMismatchCount ?? 0)),
+      domFormattingOnlyMismatchCount: Math.max(0, Number(orderedAuditInput.domFormattingOnlyMismatchCount ?? 0)),
+      domCitationOnlyMismatchCount: Math.max(0, Number(orderedAuditInput.domCitationOnlyMismatchCount ?? 0)),
+      domToolUiOnlyMismatchCount: Math.max(0, Number(orderedAuditInput.domToolUiOnlyMismatchCount ?? 0)),
+      domRealTextMismatchCount: Math.max(0, Number(orderedAuditInput.domRealTextMismatchCount ?? 0)),
+      mismatchProfiles: Array.isArray(orderedAuditInput.mismatchProfiles) ? orderedAuditInput.mismatchProfiles.slice(0, 20).map((profile) => ({
+        messageHash: typeof profile?.messageHash === "string" && /^(?:session:[a-f0-9]{8}|none)$/.test(profile.messageHash) ? profile.messageHash : "none",
+        domOrder: Math.max(0, Number(profile?.domOrder ?? 0)),
+        streamOrder: Math.max(0, Number(profile?.streamOrder ?? 0)),
+        role: ["user", "assistant", "tool"].includes(profile?.role) ? profile.role : "unknown",
+        domLength: Math.max(0, Number(profile?.domLength ?? 0)),
+        streamLength: Math.max(0, Number(profile?.streamLength ?? 0)),
+        compactEqual: profile?.compactEqual === true,
+        domContainsStream: profile?.domContainsStream === true,
+        streamContainsDom: profile?.streamContainsDom === true,
+        domIsOrderedSubset: profile?.domIsOrderedSubset === true,
+        placeholderCount: Math.max(0, Number(profile?.placeholderCount ?? 0)),
+        sourceContentKind: typeof profile?.sourceContentKind === "string" ? profile.sourceContentKind.slice(0, 100) : "unknown",
+        sourceStructure: Object.fromEntries([
+          "heading", "boldItalic", "inlineCode", "codeBlock", "link", "citation", "blockquote", "listItem",
+          "table", "math", "htmlEntity", "unicode", "toolCard", "hiddenUi", "unknownRich",
+        ].map((kind) => [kind, Math.max(0, Number(profile?.sourceStructure?.[kind] ?? 0))])),
+        domStructure: Object.fromEntries([
+          "heading", "boldItalic", "inlineCode", "codeBlock", "link", "citation", "blockquote", "listItem",
+          "table", "math", "htmlEntity", "unicode", "toolCard", "hiddenUi", "unknownRich",
+        ].map((kind) => [kind, Math.max(0, Number(profile?.domStructure?.[kind] ?? 0))])),
+        firstDifferenceRegion: ["start", "early", "middle", "late", "end"].includes(profile?.firstDifferenceRegion) ? profile.firstDifferenceRegion : "start",
+        firstDifferenceDomType: ["alphanumeric", "whitespace", "punctuation", "end", "other"].includes(profile?.firstDifferenceDomType) ? profile.firstDifferenceDomType : "other",
+        firstDifferenceSourceType: ["alphanumeric", "whitespace", "punctuation", "end", "other"].includes(profile?.firstDifferenceSourceType) ? profile.firstDifferenceSourceType : "other",
+        classification: ["formatting", "citation", "tool-ui", "real"].includes(profile?.classification) ? profile.classification : "real",
+      })) : [],
+      omittedVisibleContentKinds: Object.fromEntries(["text", "image", "video", "audio", "file", "canvas", "tool-ui", "unknown", "other"].map((kind) => [
+        kind, Math.max(0, Number(orderedAuditInput.omittedVisibleContentKinds?.[kind] ?? 0)),
+      ])),
+      mismatchCategories: Object.fromEntries([
+        "plainText", "markdownHeading", "boldItalic", "inlineCode", "codeBlock", "markdownLink", "citation",
+        "list", "blockquote", "table", "math", "unicodeEntity", "whitespaceNewline", "toolPlaceholder", "other",
+      ].map((category) => [category, Math.max(0, Number(orderedAuditInput.mismatchCategories?.[category] ?? 0))])),
+      domCompactMatchCount: Math.max(0, Number(orderedAuditInput.domCompactMatchCount ?? 0)),
+      domContainsStreamCount: Math.max(0, Number(orderedAuditInput.domContainsStreamCount ?? 0)),
+      streamContainsDomCount: Math.max(0, Number(orderedAuditInput.streamContainsDomCount ?? 0)),
+      domContiguous: orderedAuditInput.domContiguous === true,
+      buildDurationMs: Math.max(0, Number(orderedAuditInput.buildDurationMs ?? 0)),
+    } : null;
+    const observedUnsupported = captureCoverage({ messages }).unsupportedContentCounts;
+    const unsupportedContentCounts = Object.fromEntries(
+      ["image", "video", "audio", "file", "canvas", "tool-ui", "unknown"].map((type) => [
+        type,
+        Math.max(
+          0,
+          Number(declaredUnsupported?.[type] ?? 0),
+          Number(observedUnsupported?.[type] ?? 0),
+        ),
+      ]),
+    );
+    const windowTopConfirmed = input?.completenessDetails?.windowTopConfirmed === true
+      || input?.completenessDetails?.topBoundaryConfirmed === true;
+    const conversationRootConfirmed = input?.completenessDetails?.conversationRootConfirmed === true;
     const details = {
-      topBoundaryConfirmed: input?.completenessDetails?.topBoundaryConfirmed === true,
+      topBoundaryConfirmed: windowTopConfirmed,
+      windowTopConfirmed,
+      conversationRootConfirmed,
+      earliestBoundaryConfirmed: conversationRootConfirmed
+        && input?.completenessDetails?.earliestBoundaryConfirmed === true,
+      latestBoundaryConfirmed: input?.completenessDetails?.latestBoundaryConfirmed === true,
       stablePasses: Number(input?.completenessDetails?.stablePasses ?? 0),
       loadingAbsent: input?.completenessDetails?.loadingAbsent === true,
       conversationIdStable: input?.completenessDetails?.conversationIdStable === true,
       unresolvedBranches: input?.completenessDetails?.unresolvedBranches === true
         || messages.some((message) => message.role === "unknown"),
-      unsupportedContentCount: Math.max(0, Number(input?.completenessDetails?.unsupportedContentCount ?? 0)),
+      messageOmissionCount: Math.max(0, Number(input?.completenessDetails?.messageOmissionCount ?? 0)),
+      unsupportedContentCounts,
+      unsupportedContentCount: Object.values(unsupportedContentCounts).reduce((sum, count) => sum + count, 0),
       reasons: Array.isArray(input?.completenessDetails?.reasons)
         ? input.completenessDetails.reasons.filter((reason) => typeof reason === "string").slice(0, 50)
         : [],
+      passiveDataAvailable: input?.completenessDetails?.passiveDataAvailable === true,
+      initialPassiveNodeCount: Math.max(0, Number(input?.completenessDetails?.initialPassiveNodeCount ?? 0)),
+      historyPagesLoaded: Math.max(0, Number(input?.completenessDetails?.historyPagesLoaded ?? 0)),
+      passiveNodeProgression: Array.isArray(input?.completenessDetails?.passiveNodeProgression)
+        ? input.completenessDetails.passiveNodeProgression.filter(Number.isFinite).map(Number).slice(0, 500)
+        : [],
+      finalGraphNodeCount: Math.max(0, Number(input?.completenessDetails?.finalGraphNodeCount ?? 0)),
+      visibleMessageCount: Math.max(0, Number(input?.completenessDetails?.visibleMessageCount ?? messages.length)),
+      hasPreviousPageFinal: typeof input?.completenessDetails?.hasPreviousPageFinal === "boolean"
+        ? input.completenessDetails.hasPreviousPageFinal
+        : null,
+      passiveHistoryExhausted: input?.completenessDetails?.passiveHistoryExhausted === true,
+      passiveHistoryStalled: input?.completenessDetails?.passiveHistoryStalled === true,
+      paginationLoopDetected: input?.completenessDetails?.paginationLoopDetected === true,
+      activeLeafConfirmed: input?.completenessDetails?.activeLeafConfirmed === true,
+      activePathLength: Math.max(0, Number(input?.completenessDetails?.activePathLength ?? 0)),
+      missingParentCount: Math.max(0, Number(input?.completenessDetails?.missingParentCount ?? 0)),
+      cycleCount: Math.max(0, Number(input?.completenessDetails?.cycleCount ?? 0)),
+      parentConflictCount: Math.max(0, Number(input?.completenessDetails?.parentConflictCount ?? 0)),
+      pageDataConflictCount: Math.max(0, Number(input?.completenessDetails?.pageDataConflictCount ?? 0)),
+      firstUserConfirmed: input?.completenessDetails?.firstUserConfirmed === true,
+      domMatchedCount: Math.max(0, Number(input?.completenessDetails?.domMatchedCount ?? 0)),
+      domUnmatchedCount: Math.max(0, Number(input?.completenessDetails?.domUnmatchedCount ?? 0)),
+      domFingerprintMismatchCount: Math.max(0, Number(input?.completenessDetails?.domFingerprintMismatchCount ?? 0)),
+      domFormattingOnlyMismatchCount: Math.max(0, Number(input?.completenessDetails?.domFormattingOnlyMismatchCount ?? 0)),
+      domCitationOnlyMismatchCount: Math.max(0, Number(input?.completenessDetails?.domCitationOnlyMismatchCount ?? 0)),
+      domToolUiOnlyMismatchCount: Math.max(0, Number(input?.completenessDetails?.domToolUiOnlyMismatchCount ?? 0)),
+      domRealTextMismatchCount: Math.max(0, Number(input?.completenessDetails?.domRealTextMismatchCount ?? 0)),
+      activeBranchUniquelyValidated: input?.completenessDetails?.activeBranchUniquelyValidated === true,
+      orderedVisibleIdentityStable: input?.completenessDetails?.orderedVisibleIdentityStable === true,
+      textTranscriptComplete: input?.completenessDetails?.textTranscriptComplete === true,
+      richContentComplete: input?.completenessDetails?.richContentComplete === true,
+      visibleConversationComplete: input?.completenessDetails?.visibleConversationComplete === true,
+      passiveCaptureDurationMs: Math.max(0, Number(input?.completenessDetails?.passiveCaptureDurationMs ?? 0)),
+      fallbackUsed: input?.completenessDetails?.fallbackUsed === true,
+      orderedHistoryAudit,
     };
+    if (!details.earliestBoundaryConfirmed && !details.reasons.includes("earliest-boundary-unconfirmed")) {
+      details.reasons.push("earliest-boundary-unconfirmed");
+    }
+    if (!details.latestBoundaryConfirmed && !details.reasons.includes("latest-boundary-unconfirmed")) {
+      details.reasons.push("latest-boundary-unconfirmed");
+    }
     if (details.unresolvedBranches && !details.reasons.includes("unresolved-or-unknown-message-role")) {
       details.reasons.push("unresolved-or-unknown-message-role");
     }
@@ -203,16 +366,35 @@ export class ResearchCaptureService {
       completenessDetails: details,
       captureStats: {
         discoveredMessageCount: messages.length,
+        messageOmissionCount: details.messageOmissionCount,
+        unsupportedContentCounts: details.unsupportedContentCounts,
         unsupportedContentCount: details.unsupportedContentCount,
       },
     };
-    const sourceFingerprint = capturedConversationFingerprint(conversation);
-    const existing = this.research.findCapturedConversation("chatgpt", conversation.externalConversationId, sourceFingerprint);
-    const relation = existing
+    const incomingFingerprint = capturedConversationFingerprint(conversation);
+    const existing = this.research.findCapturedConversation("chatgpt", conversation.externalConversationId, incomingFingerprint);
+    const comparison = existing
       ? this.research.compareCapturedConversation(existing.id, conversation)
-      : "new";
+      : null;
+    const relation = comparison?.relation ?? "new";
+    const canonicalConversation = comparison?.conversation ?? conversation;
+    const sourceFingerprint = capturedConversationFingerprint(canonicalConversation);
     preview.status = "ready";
-    preview.finalized = { conversation, sourceFingerprint, existing, relation };
+    preview.finalized = {
+      conversation: canonicalConversation,
+      incomingConversation: conversation,
+      sourceFingerprint,
+      existing,
+      relation,
+      coverage: comparison?.coverage ?? {
+        existingMessageCount: 0,
+        incomingMessageCount: conversation.messages.length,
+        mergedMessageCount: conversation.messages.length,
+        newCoverageMessageCount: conversation.messages.length,
+        ...captureCoverage(conversation),
+      },
+      conflictReason: comparison?.reason ?? null,
+    };
     return this.publicPreview(preview);
   }
 
@@ -271,9 +453,12 @@ export class ResearchCaptureService {
       capturedAt: preview.metadata.capturedAt,
       messageCount: finalized?.conversation?.messages.length
         ?? [...preview.batches.values()].reduce((total, batch) => total + batch.length, 0),
+      messages: finalized?.conversation?.messages ?? [],
       completeness: finalized?.conversation?.completeness ?? (preview.status === "failed" ? "failed" : null),
       completenessDetails: finalized?.conversation?.completenessDetails ?? null,
       relation: finalized?.relation ?? null,
+      coverage: finalized?.coverage ?? null,
+      conflictReason: finalized?.conflictReason ?? null,
       existingRecord: finalized?.existing ?? null,
       sourceFingerprint: finalized?.sourceFingerprint ?? null,
       committed: preview.committed ?? null,

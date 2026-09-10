@@ -7,6 +7,8 @@ const cancelButton = document.querySelector<HTMLButtonElement>("#cancel")!;
 const statusElement = document.querySelector<HTMLElement>("#status")!;
 const progressBar = document.querySelector<HTMLElement>("#progress-bar")!;
 const error = document.querySelector<HTMLElement>("#error")!;
+const baseUrl = document.querySelector<HTMLInputElement>("#base-url")!;
+const saveBaseUrl = document.querySelector<HTMLButtonElement>("#save-base-url")!;
 
 function showError(value: string | null) {
   error.hidden = !value;
@@ -27,13 +29,22 @@ async function refresh() {
   if (response?.error) throw new Error(response.error);
   pairing.hidden = response.paired;
   capture.hidden = !response.paired;
+  baseUrl.value = response.baseUrl;
   renderState(response.state);
+}
+
+async function persistBaseUrl() {
+  const response = await chrome.runtime.sendMessage({ type: "set-research-os-base-url", baseUrl: baseUrl.value });
+  if (!response?.ok) throw new Error(response?.error ?? "无法保存 Research OS 地址");
+  baseUrl.value = response.baseUrl;
+  return response;
 }
 
 pairButton.addEventListener("click", async () => {
   showError(null);
   pairButton.disabled = true;
   try {
+    await persistBaseUrl();
     const response = await chrome.runtime.sendMessage({ type: "pair-research-os", code: pairingCode.value });
     if (!response?.ok) throw new Error(response?.error ?? "配对失败");
     await refresh();
@@ -41,6 +52,19 @@ pairButton.addEventListener("click", async () => {
     showError(pairError instanceof Error ? pairError.message : String(pairError));
   } finally {
     pairButton.disabled = false;
+  }
+});
+
+saveBaseUrl.addEventListener("click", async () => {
+  showError(null);
+  saveBaseUrl.disabled = true;
+  try {
+    await persistBaseUrl();
+    await refresh();
+  } catch (saveError) {
+    showError(saveError instanceof Error ? saveError.message : String(saveError));
+  } finally {
+    saveBaseUrl.disabled = false;
   }
 });
 

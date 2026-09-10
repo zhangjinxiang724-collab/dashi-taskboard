@@ -20,6 +20,14 @@
         <button id="start">捕获当前对话</button>
         <button id="cancel" class="subtle" hidden>取消捕获</button>
       </section>
+      <details>
+        <summary>本地地址设置</summary>
+        <label>
+          <span>Research OS 地址</span>
+          <input id="base-url" type="url" value="http://127.0.0.1:47823" autocomplete="off" spellcheck="false" />
+        </label>
+        <button id="save-base-url" class="subtle">保存地址</button>
+      </details>
       <p id="error" role="alert" hidden></p>
       <footer>支持普通对话和 Project 内对话；只读取你主动打开的当前对话，不读取 Cookie。</footer>
     </main>

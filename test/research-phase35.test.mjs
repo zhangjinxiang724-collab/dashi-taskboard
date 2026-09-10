@@ -7,7 +7,10 @@ import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import { afterEach, test } from "node:test";
 
-import { normalizeChatGptConversation } from "../server/import-adapters/chatgpt-export-v1.mjs";
+import {
+  normalizeChatGptConversation,
+  normalizedExportAsCapturedConversation,
+} from "../server/import-adapters/chatgpt-export-v1.mjs";
 import { ResearchDatabase } from "../server/research-database.mjs";
 import { createTaskboardServer } from "../server/index.mjs";
 
@@ -87,6 +90,12 @@ test("ChatGPT adapter keeps only the active visible user/assistant branch and fi
   assert.equal(first.messageCount, 2);
   assert.equal(first.omittedMessageCount, 1);
   assert.equal(JSON.stringify(first.content).includes("private system metadata"), false);
+  const captured = normalizedExportAsCapturedConversation(first);
+  assert.equal(captured.externalConversationId, first.externalId);
+  assert.equal(captured.completeness, "complete");
+  assert.equal(captured.completenessDetails.earliestBoundaryConfirmed, true);
+  assert.equal(captured.completenessDetails.latestBoundaryConfirmed, true);
+  assert.equal(captured.captureStats.messageOmissionCount, 0, "intentionally hidden system metadata is not a missing text message");
 });
 
 test("preview writes zero formal records, selective confirm stores compressed content, dedupes, assigns, and safely undoes", async () => {

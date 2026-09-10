@@ -4,7 +4,7 @@ import { gzipSync, gunzipSync } from "node:zlib";
 import { applyResearchMigrations } from "./research-migrations.mjs";
 import {
   capturedConversationFingerprint,
-  compareCapturedSequences,
+  reconcileCapturedConversations,
 } from "../shared/captured-conversation-domain.mjs";
 
 function now() {
@@ -477,8 +477,25 @@ export class ResearchDatabase {
 
   compareCapturedConversation(recordId, conversation) {
     const current = this.getResearchRecordContent(recordId);
-    if (!current) return "conflict";
-    return compareCapturedSequences(current.content, conversation);
+    if (!current) return { relation: "conflict", reason: "missing-current-content" };
+    const record = this.getResearchRecord(recordId);
+    const storedConversation = {
+      ...current.content,
+      provider: record?.provider ?? "chatgpt",
+      captureAdapter: current.captureAdapter ?? record?.captureAdapter ?? "unknown",
+      externalConversationId: current.content.externalConversationId ?? current.content.externalId ?? record?.externalId ?? null,
+      sourceUrl: current.content.sourceUrl ?? record?.url ?? null,
+      capturedAt: current.capturedAt,
+      branchScope: current.content.branchScope ?? "active-visible-branch",
+      completeness: current.completeness ?? record?.captureCompleteness ?? "partial",
+      completenessDetails: current.completenessDetails ?? {},
+      captureStats: current.content.captureStats ?? {
+        discoveredMessageCount: current.messageCount,
+        messageOmissionCount: current.omittedMessageCount,
+        unsupportedContentCount: 0,
+      },
+    };
+    return reconcileCapturedConversations(storedConversation, conversation);
   }
 
   createCaptureClient({ extensionId, displayName, tokenHash }) {
@@ -554,6 +571,13 @@ export class ResearchDatabase {
       throw new Error("Only complete or explicitly accepted partial captures can be saved");
     }
     const timestamp = now();
+    const captureAdapter = conversation.captureAdapter === "chatgpt-export-v1"
+      ? "chatgpt-export-v1"
+      : "chatgpt-browser-v1";
+    const storedRelation = relation === "safe_merge" ? "append" : relation;
+    const storedDetails = relation === "safe_merge"
+      ? { ...completenessDetails, coverageRelation: "safe_merge" }
+      : completenessDetails;
     const sourceFingerprint = capturedConversationFingerprint(conversation);
     const contentBuffer = Buffer.from(JSON.stringify(conversation), "utf8");
     const contentHash = `sha256:${createHash("sha256").update(contentBuffer).digest("hex")}`;
@@ -579,23 +603,23 @@ export class ResearchDatabase {
             id, primary_topic_id, title, provider, kind, url, external_id, summary, note,
             occurred_at, capture_adapter, version, deleted_at, created_at, updated_at,
             source_fingerprint, capture_completeness, last_captured_at
-          ) VALUES (?, ?, ?, 'chatgpt', 'chat', ?, ?, '', '', ?, 'chatgpt-browser-v1',
+          ) VALUES (?, ?, ?, 'chatgpt', 'chat', ?, ?, '', '', ?, ?,
             1, NULL, ?, ?, ?, ?, ?)
         `).run(
           recordId, topicId, conversation.title, conversation.sourceUrl,
-          conversation.externalConversationId, firstMessageTime ?? conversation.capturedAt,
+          conversation.externalConversationId, firstMessageTime ?? conversation.capturedAt, captureAdapter,
           timestamp, timestamp, sourceFingerprint, completeness, conversation.capturedAt,
         );
       } else {
         const update = this.database.prepare(`
           UPDATE research_records
           SET primary_topic_id = ?, title = ?, url = ?, source_fingerprint = ?,
-            capture_adapter = 'chatgpt-browser-v1', capture_completeness = ?,
+            capture_adapter = ?, capture_completeness = ?,
             last_captured_at = ?, updated_at = ?, version = version + 1
           WHERE id = ? AND version = ? AND deleted_at IS NULL
         `).run(
           topicId, conversation.title, conversation.sourceUrl, sourceFingerprint,
-          completeness, conversation.capturedAt, timestamp, recordId, expectedRecordVersion,
+          captureAdapter, completeness, conversation.capturedAt, timestamp, recordId, expectedRecordVersion,
         );
         if (update.changes === 0) {
           this.database.exec("ROLLBACK");
@@ -611,12 +635,12 @@ export class ResearchDatabase {
           completeness_details, relation_to_previous, content_encoding, content_blob,
           content_hash, source_fingerprint, message_count, omitted_message_count,
           source_created_at, source_updated_at, captured_at, is_current, created_at
-        ) VALUES (?, ?, ?, 'chatgpt-browser-v1', ?, ?, ?, 'gzip-json-v1', ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'gzip-json-v1', ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
       `).run(
-        randomUUID(), recordId, nextVersionNumber, completeness,
-        JSON.stringify(completenessDetails), relation, compressed, contentHash,
+        randomUUID(), recordId, nextVersionNumber, captureAdapter, completeness,
+        JSON.stringify(storedDetails), storedRelation, compressed, contentHash,
         sourceFingerprint, conversation.messages.length,
-        Number(conversation.captureStats?.unsupportedContentCount ?? 0),
+        Number(conversation.captureStats?.messageOmissionCount ?? 0),
         firstMessageTime ?? null, conversation.capturedAt, conversation.capturedAt, timestamp,
       );
       this.database.prepare(`
@@ -637,7 +661,7 @@ export class ResearchDatabase {
       `).run(
         recordId, compressed, contentHash, conversation.messages.length,
         firstMessageTime ?? null, conversation.capturedAt,
-        Number(conversation.captureStats?.unsupportedContentCount ?? 0), timestamp, timestamp,
+        Number(conversation.captureStats?.messageOmissionCount ?? 0), timestamp, timestamp,
       );
       this.database.exec("COMMIT");
       return {

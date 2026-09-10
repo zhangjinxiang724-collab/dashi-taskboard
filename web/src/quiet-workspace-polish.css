@@ -1092,6 +1092,12 @@
 .capture-failed { color: var(--qw-color-danger, #b42318); }
 .research-capture-warning { margin: 14px 0; padding: 14px 16px; border-left: 2px solid var(--qw-color-warning, #9a6700); background: var(--qw-color-surface-muted); color: var(--qw-color-text-muted); font-size: 12px; line-height: 1.6; }
 .research-capture-warning p, .research-capture-warning ul { margin: 6px 0 0; }
+.research-capture-media-facts { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; color: var(--qw-color-text-muted); font-size: 12px; }
+.research-capture-transcript { border-top: 1px solid var(--qw-color-border); border-bottom: 1px solid var(--qw-color-border); padding: 12px 0; }
+.research-capture-transcript summary { cursor: pointer; font-weight: 600; }
+.research-capture-transcript-list { max-height: min(52vh, 620px); overflow: auto; margin-top: 10px; }
+.research-capture-transcript-list article { padding: 12px 2px; border-top: 1px solid var(--qw-color-border); }
+.research-capture-transcript-list p, .research-capture-transcript-list pre { margin: 6px 0 0; white-space: pre-wrap; line-height: 1.55; }
 .research-capture-topic { display: grid; gap: 7px; margin-top: 22px; }
 .research-capture-topic > span { font-size: 12px; font-weight: 600; }
 .research-capture-topic select { min-height: var(--qw-control-height); padding: 0 10px; border: 1px solid var(--qw-color-border); border-radius: var(--qw-radius-control); background: var(--qw-color-surface); }
@@ -1101,6 +1107,8 @@
 .research-content-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 .research-content-meta label { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .research-content-meta select { min-height: 28px; border: 1px solid var(--qw-color-border); border-radius: 5px; background: var(--qw-color-surface); font-size: 11px; }
+.research-reader-coverage { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 14px 24px 0; padding: 10px 0; border-bottom: 1px solid var(--qw-color-border); color: var(--qw-color-text-muted); font-size: 12px; }
+.research-reader-coverage strong { color: var(--qw-color-text); }
 .research-content-messages pre { overflow: auto; padding: 12px; border-radius: 6px; background: var(--qw-color-surface-muted); white-space: pre-wrap; }
 .research-content-placeholder { color: var(--qw-color-text-faint); font-style: italic; }
 

@@ -25,7 +25,8 @@ npm run build:extension
 ## 权限边界
 
 - 只申请 `activeTab`、`scripting` 和 `storage`。
-- 只允许连接 `http://127.0.0.1:47823`。
+- 默认连接 `http://127.0.0.1:47823`；可以在扩展的“本地地址设置”中改为其他 `127.0.0.1` 或 `localhost` 端口。
+- 扩展拒绝公网、局域网和 `0.0.0.0` 地址。
 - 不读取 Cookie、浏览历史或剪贴板。
 - 不在后台自动扫描 ChatGPT。
 - 捕获完成后必须在 Research OS Preview 中由用户确认，才会写入 Research Record。

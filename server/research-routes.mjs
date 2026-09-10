@@ -345,6 +345,16 @@ export async function handleResearchRequest({
   const pathname = url.pathname;
   if (!pathname.startsWith("/api/research/")) return false;
 
+  if (pathname === "/api/research/capture/health") {
+    if (request.method !== "GET") {
+      methodNotAllowed(response, ["GET"]);
+      return true;
+    }
+    if ([...url.searchParams.keys()].length > 0) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Capture health does not accept query parameters");
+    sendJson(response, 200, { status: "ok" });
+    return true;
+  }
+
   if (pathname === "/api/research/capture/pairings/start") {
     if (request.method !== "POST") {
       methodNotAllowed(response, ["POST"]);

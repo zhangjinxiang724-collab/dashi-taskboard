@@ -116,6 +116,50 @@ export function normalizeChatGptConversation(raw) {
   };
 }
 
+export function normalizedExportAsCapturedConversation(normalized) {
+  if (!normalized) return null;
+  return {
+    schemaVersion: "captured-conversation-v1",
+    provider: "chatgpt",
+    captureAdapter: CHATGPT_CAPTURE_ADAPTER,
+    externalConversationId: normalized.externalId,
+    title: normalized.title,
+    sourceUrl: normalized.externalId ? `https://chatgpt.com/c/${normalized.externalId}` : null,
+    capturedAt: normalized.updatedAt ?? normalized.occurredAt,
+    branchScope: "active-visible-branch",
+    completeness: "complete",
+    completenessDetails: {
+      topBoundaryConfirmed: true,
+      windowTopConfirmed: true,
+      conversationRootConfirmed: true,
+      earliestBoundaryConfirmed: true,
+      latestBoundaryConfirmed: true,
+      stablePasses: 3,
+      loadingAbsent: true,
+      conversationIdStable: Boolean(normalized.externalId),
+      unresolvedBranches: false,
+      messageOmissionCount: 0,
+      unsupportedContentCounts: {},
+      unsupportedContentCount: 0,
+      reasons: [],
+    },
+    messages: normalized.content.messages.map((message, order) => ({
+      order,
+      role: message.role,
+      sourceMessageId: message.id,
+      occurredAt: message.createdAt,
+      parts: [{ type: "text", text: message.text }],
+      fingerprint: normalized.sourceFingerprint,
+    })),
+    captureStats: {
+      discoveredMessageCount: normalized.messageCount,
+      messageOmissionCount: 0,
+      unsupportedContentCounts: {},
+      unsupportedContentCount: 0,
+    },
+  };
+}
+
 function openZip(filename) {
   return new Promise((resolve, reject) => {
     yauzl.open(filename, { lazyEntries: true, validateEntrySizes: true, autoClose: false }, (error, zipfile) => {
