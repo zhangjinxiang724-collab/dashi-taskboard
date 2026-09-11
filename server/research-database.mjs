@@ -725,6 +725,7 @@ export class ResearchDatabase {
         preview: compactPreview(record.summary) || contentPreview(content) || compactPreview(record.note),
         contentAvailable: content !== null,
         messageCount: content?.messageCount ?? 0,
+        completenessDetails: content?.completenessDetails ?? null,
       };
     });
     return { total, page, pageSize, records };

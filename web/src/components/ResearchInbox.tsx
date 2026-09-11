@@ -8,6 +8,7 @@ import {
   listResearchInbox,
 } from "../researchApi";
 import type { ResearchInboxItem, ResearchRecordProvider, ResearchStatus, Topic } from "../researchTypes";
+import { createResearchCompletenessPresentation } from "../researchCompletenessPresentation";
 import { CreateTopicAndAssign } from "./CreateTopicAndAssign";
 import { researchRecordKindLabel, researchRecordProviderLabel } from "./ResearchRecordEditor";
 import { ResearchRecordReader } from "./ResearchRecordReader";
@@ -17,7 +18,7 @@ function message(error: unknown) {
 }
 
 function sourceLabel(record: ResearchInboxItem) {
-  if (record.captureAdapter === "chatgpt-browser-v1") return "浏览器捕获";
+  if (record.captureAdapter === "chatgpt-browser-v1") return "浏览器读取";
   if (record.captureAdapter === "chatgpt-export-v1") return "历史导入";
   if (record.captureAdapter === "manual-v1") return "手动记录";
   return record.captureAdapter;
@@ -143,10 +144,19 @@ export function ResearchInbox({
       {error && <div className="research-error" role="alert">{error}</div>}
       {result && <div className="research-import-result"><span>{result}</span></div>}
       {loading ? <p className="research-empty-copy">正在读取待整理记录…</p> : records.length === 0 ? <div className="research-inbox-empty"><h2>待整理记录已经清空</h2><p>以后保存但暂未归类的研究记录，会自动出现在这里。</p></div> : <div className="research-inbox-list">
-        {records.map((record) => <article key={record.id} className="research-inbox-row">
+        {records.map((record) => {
+          const completeness = record.captureCompleteness ? createResearchCompletenessPresentation({
+            completeness: record.captureCompleteness,
+            details: record.completenessDetails,
+            messageCount: record.messageCount,
+            context: "inbox",
+            captureAdapter: record.captureAdapter,
+          }) : null;
+          const symbol = completeness?.severity === "complete" ? "✓" : completeness?.severity === "failed" ? "×" : "△";
+          return <article key={record.id} className="research-inbox-row">
           {selectionMode && <label className="research-inbox-select"><input type="checkbox" aria-label={`选择 ${record.title}`} checked={selected.has(record.id)} onChange={(event) => setSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(record.id); else next.delete(record.id); return next; })} /></label>}
           <button className="research-inbox-main" type="button" onClick={() => openReader(record)}>
-            <span className="research-inbox-title-line"><strong>{record.title}</strong>{record.captureCompleteness && <em className={`capture-${record.captureCompleteness}`}>{record.captureCompleteness === "complete" ? "已确认完整" : "可能不完整"}</em>}</span>
+            <span className="research-inbox-title-line"><strong>{record.title}</strong>{completeness && <span className="research-inbox-completeness"><span className={`research-completeness-symbol is-${completeness.severity}`}>{symbol}</span>{completeness.compactLabel}</span>}</span>
             <p>{record.preview || "这条记录暂时没有可显示的正文预览。"}</p>
             <span className="research-inbox-meta">{researchRecordProviderLabel(record.provider)} · {researchRecordKindLabel(record.kind)} · {sourceLabel(record)} · {new Date(record.occurredAt).toLocaleDateString()}</span>
           </button>
@@ -155,7 +165,7 @@ export function ResearchInbox({
             <button type="button" onClick={() => setOrganizing({ ids: [record.id], mode: "existing" })}>归入主题</button>
             <details><summary aria-label="更多操作">···</summary><button type="button" disabled={pending} onClick={() => void remove(record)}>删除记录</button></details>
           </div>
-        </article>)}
+        </article>})}
       </div>}
       {total > 50 && <nav className="research-inbox-pagination" aria-label="待整理记录分页"><button disabled={page <= 1 || loading} onClick={() => void load(undefined, page - 1)}>上一页</button><span>第 {page} 页</span><button disabled={page * 50 >= total || loading} onClick={() => void load(undefined, page + 1)}>下一页</button></nav>}
       {selectionMode && selected.size > 0 && <div className="research-inbox-batch"><span>已选 {selected.size} 条</span><button className="button primary" type="button" onClick={() => setOrganizing({ ids: [...selected], mode: "existing" })}>归入主题</button><button type="button" onClick={() => setOrganizing({ ids: [...selected], mode: "new" })}>＋ 创建新主题</button><button type="button" onClick={() => setSelected(new Set())}>取消选择</button></div>}

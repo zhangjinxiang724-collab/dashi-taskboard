@@ -3,11 +3,10 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useTaskboardI18n } from "../i18n";
 import { getResearchRecordContent, listResearchRecordContentVersions } from "../researchApi";
 import {
-  captureCompletenessPresentation,
-  captureReasonLabel,
-  unsupportedContentLabels,
-} from "../researchCaptureLabels";
+  createResearchCompletenessPresentation,
+} from "../researchCompletenessPresentation";
 import type { ResearchRecord, ResearchRecordContent, ResearchRecordContentVersion } from "../researchTypes";
+import { ResearchCompletenessPanel } from "./ResearchCompletenessPanel";
 import { researchRecordKindLabel, researchRecordProviderLabel } from "./ResearchRecordEditor";
 
 function errorMessage(error: unknown) {
@@ -15,7 +14,7 @@ function errorMessage(error: unknown) {
 }
 
 function sourceLabel(record: ResearchRecord) {
-  if (record.captureAdapter === "chatgpt-browser-v1") return "浏览器捕获";
+  if (record.captureAdapter === "chatgpt-browser-v1") return "浏览器读取";
   if (record.captureAdapter === "chatgpt-export-v1") return "历史导入";
   if (record.captureAdapter === "manual-v1") return "手动记录";
   return record.captureAdapter;
@@ -24,7 +23,7 @@ function sourceLabel(record: ResearchRecord) {
 function versionSourceLabel(version: ResearchRecordContentVersion) {
   if (version.completenessDetails?.coverageRelation === "safe_merge") return "渐进合并";
   if (version.captureAdapter === "chatgpt-export-v1") return "ChatGPT 导出";
-  if (version.captureAdapter === "chatgpt-browser-v1") return "浏览器捕获";
+  if (version.captureAdapter === "chatgpt-browser-v1") return "浏览器读取";
   return version.captureAdapter;
 }
 
@@ -79,7 +78,13 @@ export function ResearchRecordReader({
   }
 
   const resolvedCompleteness = content?.completeness ?? record.captureCompleteness;
-  const completeness = captureCompletenessPresentation(resolvedCompleteness ?? null, content?.completenessDetails);
+  const completeness = createResearchCompletenessPresentation({
+    completeness: resolvedCompleteness ?? null,
+    details: content?.completenessDetails,
+    messageCount: content?.messageCount ?? 0,
+    context: "reader",
+    captureAdapter: content?.captureAdapter ?? record.captureAdapter,
+  });
 
   return (
     <div className="modal-backdrop research-content-backdrop" role="presentation">
@@ -94,9 +99,16 @@ export function ResearchRecordReader({
         </header>
         <div className="research-content-meta">
           <time dateTime={record.occurredAt}>{new Date(record.occurredAt).toLocaleString()}</time>
-          {content && <span>已保存 {content.messageCount} 条文本消息</span>}
-          {resolvedCompleteness && <strong className={`capture-${resolvedCompleteness}`}>{completeness.overallLabel}</strong>}
-          {versions.length > 1 && content && <label>{text("正文版本", "Content version")}<select value={content.versionNumber} disabled={loading} onChange={(event) => void selectVersion(Number(event.target.value))}>{versions.map((version) => <option key={version.id} value={version.versionNumber}>版本 {version.versionNumber} · {versionSourceLabel(version)} · {version.messageCount} 条 · {version.completeness === "complete" ? "完整" : "部分完整"}{version.isCurrent ? " · 当前" : ""}</option>)}</select></label>}
+          {versions.length > 1 && content && <label>{text("正文版本", "Content version")}<select value={content.versionNumber} disabled={loading} onChange={(event) => void selectVersion(Number(event.target.value))}>{versions.map((version) => {
+            const versionCompleteness = createResearchCompletenessPresentation({
+              completeness: version.completeness,
+              details: version.completenessDetails,
+              messageCount: version.messageCount,
+              context: "reader",
+              captureAdapter: version.captureAdapter,
+            });
+            return <option key={version.id} value={version.versionNumber}>版本 {version.versionNumber} · {versionSourceLabel(version)} · {version.messageCount} 条 · {versionCompleteness.compactLabel}{version.isCurrent ? " · 当前" : ""}</option>;
+          })}</select></label>}
           {record.url && <a href={record.url} target="_blank" rel="noopener noreferrer">{text("打开原始内容 ↗", "Open original ↗")}</a>}
         </div>
         {actions && <div className="research-reader-actions">{actions}</div>}
@@ -107,21 +119,10 @@ export function ResearchRecordReader({
           {record.note && <section><span>{text("备注", "Note")}</span><p>{record.note}</p></section>}
           {!record.summary && !record.note && <p>{text("这条记录暂时没有可阅读的正文。", "This record does not have readable content yet.")}</p>}
         </div> : null}
-        {content?.completenessDetails ? <div className="research-reader-coverage">
-          <strong>完整性</strong>
-          <span className={content.completenessDetails.textTranscriptComplete ? "capture-complete" : "capture-partial"}>文字问答：{completeness.textLabel}</span>
-          <span className={content.completenessDetails.richContentComplete ? "capture-complete" : "capture-partial"}>富媒体：{completeness.richLabel}</span>
-          <span>文本消息：{content.messageCount} 条</span>
-          <span>当前捕获窗口顶部{content.completenessDetails.windowTopConfirmed ?? content.completenessDetails.topBoundaryConfirmed ? "已稳定" : "未稳定"}</span>
-          <span>对话根节点{content.completenessDetails.conversationRootConfirmed ? "已确认" : "未确认"}</span>
-          <span>最新边界{content.completenessDetails.latestBoundaryConfirmed ? "已确认" : "未确认"}</span>
-          {Number(content.completenessDetails.messageOmissionCount ?? 0) > 0 ? <span>消息正文遗漏 {content.completenessDetails.messageOmissionCount} 条</span> : null}
-          {Object.entries(content.completenessDetails.unsupportedContentCounts ?? {}).filter(([, count]) => Number(count) > 0).map(([type, count]) => (
-            <span key={type}>{unsupportedContentLabels[type] ?? "其他内容"}未完整保存：{Number(count)}</span>
-          ))}
-        </div> : null}
-        {content?.completeness === "partial" && content.completenessDetails?.reasons.length ? <div className="research-capture-warning"><strong>{completeness.partialHeading}</strong><ul>{content.completenessDetails.reasons.map((reason) => <li key={reason}>{captureReasonLabel(reason)}</li>)}</ul></div> : null}
-        {content && <div className="research-content-messages">
+        {resolvedCompleteness ? <div className="research-reader-completeness"><ResearchCompletenessPanel presentation={completeness} /></div> : null}
+        {content && <section className="research-content-transcript">
+          <h3>对话内容 · {content.messageCount} 条</h3>
+          <div className="research-content-messages">
           {content.content.messages.map((message, index) => (
             <article key={message.id ?? message.sourceMessageId ?? index} className={`role-${message.role}`}>
               <strong>{message.role === "user" ? text("我", "You") : message.role === "assistant" ? "ChatGPT" : message.role}</strong>
@@ -130,11 +131,12 @@ export function ResearchRecordReader({
                 : part.type === "link"
                   ? <p key={partIndex}><a href={part.url} target="_blank" rel="noopener noreferrer">{part.text || part.url}</a></p>
                   : part.type === "media-placeholder"
-                    ? <p key={partIndex} className="research-content-placeholder">[{part.label || "未捕获的媒体内容"}]</p>
+                    ? <p key={partIndex} className="research-content-placeholder">[{part.label || "未完整保存的图片或文件"}]</p>
                     : <p key={partIndex}>{part.text}</p>) : <p>{message.text}</p>}
             </article>
           ))}
-        </div>}
+          </div>
+        </section>}
       </section>
     </div>
   );

@@ -8,22 +8,13 @@ import {
 } from "../researchApi";
 import type { BrowserCapturePreview, Topic } from "../researchTypes";
 import {
-  captureCompletenessPresentation,
-  captureReasonLabel,
-  unsupportedContentLabels,
-} from "../researchCaptureLabels";
+  createResearchCompletenessPresentation,
+} from "../researchCompletenessPresentation";
+import { ResearchCompletenessPanel } from "./ResearchCompletenessPanel";
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
-
-const relationLabel = {
-  new: "新对话",
-  identical: "已经是最新",
-  append: "发现后续新消息",
-  safe_merge: "发现同一对话的新覆盖内容",
-  conflict: "历史内容发生变化",
-} as const;
 
 export function ResearchCapturePreview({ previewId }: { previewId: string }) {
   const [preview, setPreview] = useState<BrowserCapturePreview | null>(null);
@@ -80,55 +71,50 @@ export function ResearchCapturePreview({ previewId }: { previewId: string }) {
     }
   }
 
-  if (pending && !preview) return <section className="research-capture-preview"><p>正在读取捕获预览…</p></section>;
-  if (!preview) return <section className="research-capture-preview"><div className="research-error">{error ?? "捕获预览不存在或已经过期。"}</div></section>;
+  if (pending && !preview) return <section className="research-capture-preview"><p>正在读取保存预览…</p></section>;
+  if (!preview) return <section className="research-capture-preview"><div className="research-error">{error ?? "保存预览不存在或已经过期。"}</div></section>;
 
   const partial = preview.completeness === "partial";
   const conflict = preview.relation === "conflict";
   const failed = preview.completeness === "failed";
-  const completeness = captureCompletenessPresentation(preview.completeness, preview.completenessDetails);
-  const unsupportedContent = Object.entries(preview.completenessDetails?.unsupportedContentCounts ?? {})
-    .filter(([, count]) => Number(count) > 0);
+  const completeness = createResearchCompletenessPresentation({
+    completeness: preview.completeness,
+    details: preview.completenessDetails,
+    messageCount: preview.messageCount,
+    context: "preview",
+    captureAdapter: "chatgpt-browser-v1",
+  });
   const canSave = !failed
     && (!partial || allowPartial)
     && (!conflict || acceptConflict)
     && preview.status !== "committed";
+  const relationNotice = preview.relation === "identical"
+    ? "发现之前保存过这条对话，目前已经是最新。"
+    : preview.relation === "append" || preview.relation === "safe_merge"
+      ? preview.coverage
+        ? `发现之前保存过这条对话。这次会补充 ${preview.coverage.newCoverageMessageCount} 条新消息。`
+        : "发现之前保存过这条对话。这次会补充新消息。"
+      : preview.relation === "conflict"
+        ? "发现之前保存的内容发生变化，需要确认。"
+        : null;
 
   return (
     <section className="research-capture-preview">
       <header>
-        <span>ChatGPT Browser Capture</span>
+        <span>ChatGPT 浏览器读取</span>
         <h1>保存当前研究对话</h1>
-        <p>捕获不等于保存。请确认内容完整性和 Topic 后再写入 Research OS。</p>
+        <p>先确认读取结果，再保存到 Research OS。</p>
       </header>
       <article className="research-capture-summary">
         <div className="research-capture-title">
           <div><span>当前对话</span><h2>{preview.title}</h2></div>
           <a href={preview.sourceUrl} target="_blank" rel="noopener noreferrer">打开原对话 ↗</a>
         </div>
-        <div className="research-capture-facts">
-          <span><small>消息</small><strong>{preview.messageCount} 条</strong></span>
-          <span><small>总体</small><strong className={`capture-${preview.completeness}`}>{completeness.overallLabel}</strong></span>
-          <span><small>文字问答</small><strong className={preview.completenessDetails?.textTranscriptComplete ? "capture-complete" : "capture-partial"}>{completeness.textLabel}</strong></span>
-          <span><small>富媒体</small><strong className={preview.completenessDetails?.richContentComplete ? "capture-complete" : "capture-partial"}>{completeness.richLabel}</strong></span>
-          <span><small>判断</small><strong>{preview.relation ? relationLabel[preview.relation] : "正在判断"}</strong></span>
-        </div>
-        {unsupportedContent.length ? <div className="research-capture-media-facts">
-          {unsupportedContent.map(([type, count]) => <span key={type}>{unsupportedContentLabels[type] ?? "其他内容"}未完整保存：{Number(count)}</span>)}
-        </div> : null}
-        {preview.relation === "safe_merge" && preview.coverage ? (
-          <div className="research-capture-warning research-capture-coverage">
-            <strong>将安全合并为同一条研究记录</strong>
-            <p>现有 {preview.coverage.existingMessageCount} 条 · 本次 {preview.coverage.incomingMessageCount} 条 · 合并后 {preview.coverage.mergedMessageCount} 条 · 新增覆盖 {preview.coverage.newCoverageMessageCount} 条</p>
-            <p>最早边界{preview.coverage.earliestBoundaryConfirmed ? "已确认" : "未确认"} · 最新边界{preview.coverage.latestBoundaryConfirmed ? "已确认" : "未确认"}</p>
-          </div>
-        ) : null}
-        {preview.completenessDetails?.reasons.length ? (
-          <div className="research-capture-warning"><strong>{completeness.partialHeading}</strong><ul>{preview.completenessDetails.reasons.map((reason) => <li key={reason}>{captureReasonLabel(reason)}</li>)}</ul></div>
-        ) : null}
+        <ResearchCompletenessPanel presentation={completeness} />
+        {relationNotice ? <p className={`research-capture-relation is-${preview.relation}`}>{relationNotice}</p> : null}
         {(preview.messages?.length ?? 0) > 0 ? (
           <details className="research-capture-transcript" open>
-            <summary>捕获正文 · {preview.messages?.length ?? 0} 条</summary>
+            <summary>对话内容 · {preview.messages?.length ?? 0} 条</summary>
             <div className="research-capture-transcript-list">
               {(preview.messages ?? []).map((capturedMessage) => (
                 <article key={capturedMessage.sourceMessageId ?? capturedMessage.fingerprint}>
@@ -151,7 +137,7 @@ export function ResearchCapturePreview({ previewId }: { previewId: string }) {
             {topics.map((topic) => <option key={topic.id} value={topic.id}>{topic.title}</option>)}
           </select>
         </label>
-        {partial && <label className="research-capture-confirmation"><input type="checkbox" checked={allowPartial} onChange={(event) => setAllowPartial(event.target.checked)} /><span>{preview.completenessDetails?.textTranscriptComplete && !preview.completenessDetails?.richContentComplete ? "我知道文字问答完整，但富媒体未完全归档；仍然保存，并保留部分完整标记。" : "我知道文字问答尚未确认完整，仍然保存，并保留部分完整标记。"}</span></label>}
+        {partial && <label className="research-capture-confirmation"><input type="checkbox" checked={allowPartial} onChange={(event) => setAllowPartial(event.target.checked)} /><span>{preview.completenessDetails?.textTranscriptComplete && !preview.completenessDetails?.richContentComplete ? "我知道部分图片和文件没有完整读取，仍然保存本次结果。" : "我知道这次可能缺少部分问答，仍然保存本次结果。"}</span></label>}
         {conflict && <label className="research-capture-confirmation"><input type="checkbox" checked={acceptConflict} onChange={(event) => setAcceptConflict(event.target.checked)} /><span>保存为新的当前版本；旧正文版本不得删除。</span></label>}
         {error && <div className="research-error" role="alert">{error}</div>}
         {result && <div className="research-import-result"><span>{result}</span>{savedToInbox && <a href="/?researchView=inbox">前往研究收件箱</a>}</div>}

@@ -109,6 +109,7 @@ export interface ResearchInboxItem extends ResearchRecord {
   preview: string;
   contentAvailable: boolean;
   messageCount: number;
+  completenessDetails: CaptureCompletenessDetails | null;
 }
 
 export interface ResearchInboxPage {

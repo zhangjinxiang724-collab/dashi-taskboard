@@ -23,6 +23,7 @@
   --qw-color-positive-soft: #edf8f1;
   --qw-color-waiting: #9a6811;
   --qw-color-waiting-soft: #fff7e5;
+  --qw-color-danger: #9b4f46;
   --qw-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   --qw-font-size-xs: 10px;
   --qw-font-size-sm: 12px;
@@ -87,6 +88,7 @@
   --qw-color-positive-soft: rgba(54, 145, 94, 0.16);
   --qw-color-waiting: #dfb45f;
   --qw-color-waiting-soft: rgba(186, 126, 22, 0.16);
+  --qw-color-danger: #d68b82;
   --qw-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.26);
   --qw-shadow-float: 0 18px 48px rgba(0, 0, 0, 0.42);
 }

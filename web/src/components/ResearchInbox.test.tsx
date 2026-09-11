@@ -66,6 +66,18 @@ const record: ResearchInboxItem = {
   preview: "这是一条可能不完整、但仍可阅读和整理的研究记录。",
   contentAvailable: true,
   messageCount: 2,
+  completenessDetails: {
+    topBoundaryConfirmed: true,
+    stablePasses: 2,
+    loadingAbsent: true,
+    conversationIdStable: true,
+    unresolvedBranches: false,
+    unsupportedContentCount: 1,
+    unsupportedContentCounts: { image: 1 },
+    reasons: ["unsupported-content-present"],
+    textTranscriptComplete: true,
+    richContentComplete: false,
+  },
 };
 
 const content: ResearchRecordContent = {
@@ -121,8 +133,8 @@ describe("Research Inbox entry paths", () => {
     renderChinese(<ResearchInbox topics={[topic]} onCountChange={() => {}} onTopicCreated={() => {}} />);
 
     expect(await screen.findByText("伯克希尔深度研究")).toBeTruthy();
-    expect(screen.getByText("可能不完整")).toBeTruthy();
-    expect(screen.getByText(/ChatGPT · 深度研究 · 浏览器捕获/)).toBeTruthy();
+    expect(screen.getByText("文字完整")).toBeTruthy();
+    expect(screen.getByText(/ChatGPT · 深度研究 · 浏览器读取/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "查看正文" }));
     expect(await screen.findByRole("button", { name: /返回待整理记录/ })).toBeTruthy();
@@ -131,6 +143,30 @@ describe("Research Inbox entry paths", () => {
     fireEvent.click(within(screen.getByRole("dialog", { name: "研究记录正文" })).getByRole("button", { name: "归入主题" }));
     fireEvent.click(await screen.findByRole("button", { name: /BSX 长期投资研究/ }));
     await waitFor(() => expect(api.assignResearchRecordsToTopic).toHaveBeenCalledWith([record.id], topic.id));
+  });
+
+  it("distinguishes text-complete and text-incomplete Inbox records", async () => {
+    api.listResearchInbox.mockResolvedValue({
+      total: 2,
+      page: 1,
+      pageSize: 50,
+      records: [record, {
+        ...record,
+        id: "record-incomplete",
+        title: "文字缺失记录",
+        completenessDetails: {
+          ...record.completenessDetails!,
+          textTranscriptComplete: false,
+          richContentComplete: false,
+        },
+      }],
+    });
+
+    renderChinese(<ResearchInbox topics={[topic]} onCountChange={() => {}} onTopicCreated={() => {}} />);
+
+    expect(await screen.findByText("文字完整")).toBeTruthy();
+    expect(screen.getByText("文字可能缺失")).toBeTruthy();
+    expect(screen.queryByText("可能不完整")).toBeNull();
   });
 
   it("lets the ChatGPT importer leave its local flow for the global Inbox", () => {
@@ -153,14 +189,55 @@ describe("Research Inbox entry paths", () => {
       relation: "new",
       existingRecord: null,
       sourceFingerprint: "fingerprint",
+      messages: [
+        { order: 0, role: "user", sourceMessageId: "m1", occurredAt: null, parts: [{ type: "text", text: "研究问题" }], fingerprint: "m1" },
+      ],
     };
     api.getBrowserCapturePreview.mockResolvedValue(preview);
     api.listTopics.mockResolvedValue([topic]);
     api.confirmBrowserCapturePreview.mockResolvedValue({ kind: "created", record, contentVersion: 1 });
 
     renderChinese(<ResearchCapturePreview previewId={preview.id} />);
+    expect(await screen.findByText("对话内容 · 1 条")).toBeTruthy();
+    expect(screen.queryByText(/判断：?新对话/)).toBeNull();
+    expect(screen.queryByText(/捕获正文/)).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "确认保存" }));
     expect(await screen.findByText(/已保存到待整理记录/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "前往研究收件箱" }).getAttribute("href")).toBe("/?researchView=inbox");
+  });
+
+  it("shows meaningful append and conflict notices without a generic judgment field", async () => {
+    const basePreview: BrowserCapturePreview = {
+      id: "preview-existing",
+      status: "ready",
+      title: "已有对话",
+      sourceUrl: "https://chatgpt.com/c/example",
+      capturedAt: "2026-08-29T08:00:00.000Z",
+      messageCount: 6,
+      completeness: "complete",
+      completenessDetails: null,
+      relation: "append",
+      existingRecord: record,
+      sourceFingerprint: "fingerprint",
+      coverage: {
+        existingMessageCount: 4,
+        incomingMessageCount: 6,
+        mergedMessageCount: 6,
+        newCoverageMessageCount: 2,
+        earliestBoundaryConfirmed: true,
+        latestBoundaryConfirmed: true,
+      },
+    };
+    api.getBrowserCapturePreview.mockResolvedValue(basePreview);
+    api.listTopics.mockResolvedValue([topic]);
+
+    const rendered = renderChinese(<ResearchCapturePreview previewId={basePreview.id} />);
+    expect(await screen.findByText("发现之前保存过这条对话。这次会补充 2 条新消息。")).toBeTruthy();
+    expect(screen.queryByText("判断")).toBeNull();
+
+    rendered.unmount();
+    api.getBrowserCapturePreview.mockResolvedValue({ ...basePreview, id: "preview-conflict", relation: "conflict" });
+    renderChinese(<ResearchCapturePreview previewId="preview-conflict" />);
+    expect(await screen.findByText("发现之前保存的内容发生变化，需要确认。")).toBeTruthy();
   });
 });
