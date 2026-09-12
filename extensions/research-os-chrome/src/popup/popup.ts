@@ -9,6 +9,7 @@ const progressBar = document.querySelector<HTMLElement>("#progress-bar")!;
 const error = document.querySelector<HTMLElement>("#error")!;
 const baseUrl = document.querySelector<HTMLInputElement>("#base-url")!;
 const saveBaseUrl = document.querySelector<HTMLButtonElement>("#save-base-url")!;
+const disconnectButton = document.querySelector<HTMLButtonElement>("#disconnect")!;
 
 function showError(value: string | null) {
   error.hidden = !value;
@@ -29,6 +30,7 @@ async function refresh() {
   if (response?.error) throw new Error(response.error);
   pairing.hidden = response.paired;
   capture.hidden = !response.paired;
+  disconnectButton.hidden = !response.paired;
   baseUrl.value = response.baseUrl;
   renderState(response.state);
 }
@@ -65,6 +67,20 @@ saveBaseUrl.addEventListener("click", async () => {
     showError(saveError instanceof Error ? saveError.message : String(saveError));
   } finally {
     saveBaseUrl.disabled = false;
+  }
+});
+
+disconnectButton.addEventListener("click", async () => {
+  showError(null);
+  disconnectButton.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "disconnect-research-os" });
+    if (!response?.ok) throw new Error(response?.error ?? "无法断开 Research OS");
+    await refresh();
+  } catch (disconnectError) {
+    showError(disconnectError instanceof Error ? disconnectError.message : String(disconnectError));
+  } finally {
+    disconnectButton.disabled = false;
   }
 });
 

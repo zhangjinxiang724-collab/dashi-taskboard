@@ -1,8 +1,11 @@
-import { pairResearchOs, sendConversationToPreview } from "../local/research-os-client";
+import { sendConversationToPreview } from "../local/research-os-client";
 import {
-  DEFAULT_RESEARCH_OS_BASE_URL,
-  normalizeResearchOsBaseUrl,
-} from "../local/research-os-endpoint";
+  clearCaptureConnection,
+  configuredResearchOsBaseUrl,
+  loadCaptureConnection,
+  setConfiguredResearchOsBaseUrl,
+} from "../local/research-os-connection";
+import { pairAndPersistResearchOs } from "../local/research-os-pairing";
 import type { CapturedConversation, CaptureProgress } from "../model/captured-conversation";
 import { parseChatGptConversationUrl } from "../model/chatgpt-conversation-url";
 
@@ -27,26 +30,12 @@ async function setState(state: ExtensionState) {
   await chrome.storage.session.set({ captureState: state });
 }
 
-async function pairedToken(): Promise<string | null> {
-  const stored = await chrome.storage.local.get("researchOsCaptureToken");
-  return typeof stored.researchOsCaptureToken === "string" ? stored.researchOsCaptureToken : null;
-}
-
 async function researchOsBaseUrl() {
-  const stored = await chrome.storage.local.get("researchOsBaseUrl");
-  return normalizeResearchOsBaseUrl(
-    typeof stored.researchOsBaseUrl === "string"
-      ? stored.researchOsBaseUrl
-      : DEFAULT_RESEARCH_OS_BASE_URL,
-  );
+  return configuredResearchOsBaseUrl(chrome.storage.local);
 }
 
 async function setResearchOsBaseUrl(value: string) {
-  const next = normalizeResearchOsBaseUrl(value);
-  const current = await researchOsBaseUrl();
-  if (next !== current) await chrome.storage.local.remove("researchOsCaptureToken");
-  await chrome.storage.local.set({ researchOsBaseUrl: next });
-  return next;
+  return setConfiguredResearchOsBaseUrl(chrome.storage.local, value);
 }
 
 async function clearPendingCapture() {
@@ -85,8 +74,8 @@ chrome.runtime.onStartup.addListener(() => {
 
 chrome.runtime.onMessage.addListener((request: any, _sender: any, sendResponse: (value: unknown) => void) => {
   if (request?.type === "get-extension-state") {
-    Promise.all([pairedToken(), researchOsBaseUrl(), chrome.storage.session.get("captureState")])
-      .then(([token, baseUrl, state]) => sendResponse({ paired: Boolean(token), baseUrl, state: state.captureState ?? idleState }))
+    Promise.all([loadCaptureConnection(chrome.storage.local), researchOsBaseUrl(), chrome.storage.session.get("captureState")])
+      .then(([connection, baseUrl, state]) => sendResponse({ paired: Boolean(connection), baseUrl, state: state.captureState ?? idleState }))
       .catch((error) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
     return true;
   }
@@ -98,11 +87,17 @@ chrome.runtime.onMessage.addListener((request: any, _sender: any, sendResponse: 
     return true;
   }
 
+  if (request?.type === "disconnect-research-os") {
+    clearCaptureConnection(chrome.storage.local)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+    return true;
+  }
+
   if (request?.type === "pair-research-os") {
     researchOsBaseUrl()
-      .then((baseUrl) => pairResearchOs(baseUrl, String(request.code ?? "").trim()))
-      .then(async ({ token }) => {
-        await chrome.storage.local.set({ researchOsCaptureToken: token });
+      .then(async (baseUrl) => {
+        await pairAndPersistResearchOs(chrome.storage.local, baseUrl, String(request.code ?? "").trim());
         sendResponse({ ok: true });
       })
       .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
@@ -111,8 +106,8 @@ chrome.runtime.onMessage.addListener((request: any, _sender: any, sendResponse: 
 
   if (request?.type === "start-browser-capture") {
     (async () => {
-      const token = await pairedToken();
-      if (!token) throw new Error("请先使用 Research OS 生成的配对码连接扩展。");
+      const connection = await loadCaptureConnection(chrome.storage.local);
+      if (!connection) throw new Error("请先使用 Research OS 生成的配对码连接扩展。");
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab?.id || typeof tab.url !== "string" || !parseChatGptConversationUrl(tab.url)) {
         throw new Error("请先打开一条 ChatGPT 对话。支持普通对话和 Project 内对话。");
@@ -184,12 +179,11 @@ chrome.runtime.onMessage.addListener((request: any, _sender: any, sendResponse: 
   if (request?.type === "capture-result") {
     (async () => {
       await clearPendingCapture();
-      const token = await pairedToken();
-      if (!token) throw new Error("扩展配对已经失效，请重新配对。");
-      const baseUrl = await researchOsBaseUrl();
+      const connection = await loadCaptureConnection(chrome.storage.local);
+      if (!connection) throw new Error("扩展配对已经失效，请重新配对。");
       const conversation = request.conversation as CapturedConversation;
       await setState({ phase: "sending", message: "正在发送到 Research OS Preview…", discovered: conversation.messages.length, tabId: null });
-      const result = await sendConversationToPreview(baseUrl, conversation, token);
+      const result = await sendConversationToPreview(connection.endpoint, conversation, connection.token);
       await setState({ phase: "complete", message: "捕获完成，已打开 Research OS Preview。", discovered: conversation.messages.length, tabId: null });
       await chrome.tabs.create({ url: result.previewUrl });
     })().catch(async (error) => {

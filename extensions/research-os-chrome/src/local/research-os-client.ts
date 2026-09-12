@@ -39,6 +39,13 @@ export async function pairResearchOs(baseUrl: string, code: string) {
   return responseJson(response) as Promise<{ token: string; client: { id: string } }>;
 }
 
+export async function revokeResearchOsClient(baseUrl: string, clientId: string) {
+  const response = await localFetch(baseUrl, `/api/research/capture/clients/${encodeURIComponent(clientId)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) throw new Error(`Research OS 请求失败（${response.status}）`);
+}
+
 async function authenticatedFetch(baseUrl: string, path: string, token: string, init: RequestInit = {}) {
   const response = await localFetch(baseUrl, path, {
     ...init,
