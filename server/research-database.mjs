@@ -597,6 +597,35 @@ export class ResearchDatabase {
       : 1;
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      if (currentRecord) {
+        const currentContentVersion = this.database.prepare(`
+          SELECT version_number, source_fingerprint
+          FROM research_record_content_versions
+          WHERE record_id = ? AND is_current = 1
+        `).get(recordId);
+        if (currentContentVersion?.source_fingerprint === sourceFingerprint) {
+          const update = this.database.prepare(`
+            UPDATE research_records
+            SET primary_topic_id = ?, title = ?, url = ?, source_fingerprint = ?,
+              capture_adapter = ?, capture_completeness = ?,
+              last_captured_at = ?, updated_at = ?, version = version + 1
+            WHERE id = ? AND version = ? AND deleted_at IS NULL
+          `).run(
+            topicId, conversation.title, conversation.sourceUrl, sourceFingerprint,
+            captureAdapter, completeness, conversation.capturedAt, timestamp, recordId, expectedRecordVersion,
+          );
+          if (update.changes === 0) {
+            this.database.exec("ROLLBACK");
+            return { kind: "conflict", currentVersion: this.getResearchRecord(recordId)?.version ?? null };
+          }
+          this.database.exec("COMMIT");
+          return {
+            kind: "already_latest",
+            record: this.getResearchRecord(recordId),
+            contentVersion: Number(currentContentVersion.version_number),
+          };
+        }
+      }
       if (!currentRecord) {
         this.database.prepare(`
           INSERT INTO research_records (

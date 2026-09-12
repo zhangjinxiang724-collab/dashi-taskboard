@@ -219,6 +219,121 @@ test("browser capture pairs with exact extension origin and preserves append/con
   database.close();
 });
 
+test("browser capture does not create a content version when only capture evidence improves", async () => {
+  const { baseUrl, directory } = await startServer();
+  const { token } = await pair(baseUrl);
+  const firstMessages = [
+    { ...message(0, "user", "研究长期资本回报。"), diagnosticMessageHash: "session:first-user" },
+    { ...message(1, "assistant", "先核对投入资本与现金回报。"), diagnosticMessageHash: "session:first-assistant" },
+  ];
+  const firstEvidence = {
+    completeness: "partial",
+    completenessDetails: {
+      ...completeEvidence.completenessDetails,
+      latestBoundaryConfirmed: false,
+      reasons: ["latest-boundary-unconfirmed"],
+      passiveCaptureDurationMs: 100,
+    },
+  };
+  const first = await createCapture(baseUrl, token, metadata("no-op-evidence-conversation"), firstMessages, firstEvidence);
+  const firstConfirm = await request(baseUrl, `/api/research/captures/browser/previews/${first.id}/confirm`, {
+    method: "POST", body: { topicId: null, allowPartial: true },
+  });
+  assert.equal(firstConfirm.response.status, 201, JSON.stringify(firstConfirm.body));
+  assert.equal(firstConfirm.body.result.contentVersion, 1);
+
+  const secondMessages = firstMessages.map((capturedMessage) => ({
+    ...capturedMessage,
+    diagnosticMessageHash: `${capturedMessage.diagnosticMessageHash}-next-capture`,
+  }));
+  const secondMetadata = {
+    ...metadata("no-op-evidence-conversation"),
+    capturedAt: "2026-08-29T02:00:00.000Z",
+  };
+  const secondEvidence = {
+    ...completeEvidence,
+    completenessDetails: {
+      ...completeEvidence.completenessDetails,
+      passiveCaptureDurationMs: 250,
+    },
+  };
+  const second = await createCapture(baseUrl, token, secondMetadata, secondMessages, secondEvidence);
+  assert.equal(second.relation, "safe_merge");
+  assert.equal(second.coverage.newCoverageMessageCount, 0);
+  assert.equal(second.sourceFingerprint, first.sourceFingerprint);
+
+  const secondConfirm = await request(baseUrl, `/api/research/captures/browser/previews/${second.id}/confirm`, {
+    method: "POST",
+    body: {
+      topicId: null,
+      expectedRecordVersion: firstConfirm.body.result.record.version,
+    },
+  });
+  assert.equal(secondConfirm.response.status, 200, JSON.stringify(secondConfirm.body));
+  assert.equal(secondConfirm.body.result.kind, "already_latest");
+  assert.equal(secondConfirm.body.result.contentVersion, 1);
+  assert.equal(
+    secondConfirm.body.result.record.version,
+    firstConfirm.body.result.record.version + 1,
+  );
+
+  const database = new DatabaseSync(path.join(directory, "taskboard.sqlite"), { readOnly: true });
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM research_records WHERE deleted_at IS NULL").get().count, 1);
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM research_record_content_versions").get().count, 1);
+  const current = database.prepare(`
+    SELECT version_number, is_current FROM research_record_content_versions WHERE record_id = ?
+  `).get(firstConfirm.body.result.record.id);
+  assert.equal(current.version_number, 1);
+  assert.equal(current.is_current, 1);
+  const currentContentConsistency = database.prepare(`
+    SELECT
+      contents.content_hash = versions.content_hash AS content_hash_equal,
+      contents.content_blob = versions.content_blob AS content_blob_equal,
+      records.source_fingerprint = versions.source_fingerprint AS source_fingerprint_equal
+    FROM research_records records
+    JOIN research_record_contents contents ON contents.record_id = records.id
+    JOIN research_record_content_versions versions
+      ON versions.record_id = records.id AND versions.is_current = 1
+    WHERE records.id = ?
+  `).get(firstConfirm.body.result.record.id);
+  assert.equal(currentContentConsistency.content_hash_equal, 1);
+  assert.equal(currentContentConsistency.content_blob_equal, 1);
+  assert.equal(currentContentConsistency.source_fingerprint_equal, 1);
+  const record = database.prepare(`
+    SELECT capture_completeness, last_captured_at FROM research_records WHERE id = ?
+  `).get(firstConfirm.body.result.record.id);
+  assert.equal(record.capture_completeness, "complete");
+  assert.equal(record.last_captured_at, secondMetadata.capturedAt);
+  database.close();
+
+  const concurrentMetadata = {
+    ...secondMetadata,
+    capturedAt: "2026-08-29T03:00:00.000Z",
+  };
+  const [concurrentA, concurrentB] = await Promise.all([
+    createCapture(baseUrl, token, concurrentMetadata, secondMessages, secondEvidence),
+    createCapture(baseUrl, token, concurrentMetadata, secondMessages, secondEvidence),
+  ]);
+  const concurrentResults = await Promise.all([
+    request(baseUrl, `/api/research/captures/browser/previews/${concurrentA.id}/confirm`, {
+      method: "POST",
+      body: { topicId: null, expectedRecordVersion: secondConfirm.body.result.record.version },
+    }),
+    request(baseUrl, `/api/research/captures/browser/previews/${concurrentB.id}/confirm`, {
+      method: "POST",
+      body: { topicId: null, expectedRecordVersion: secondConfirm.body.result.record.version },
+    }),
+  ]);
+  assert.deepEqual(concurrentResults.map(({ response }) => response.status).sort(), [200, 409]);
+  const afterConcurrent = new DatabaseSync(path.join(directory, "taskboard.sqlite"), { readOnly: true });
+  assert.equal(afterConcurrent.prepare("SELECT COUNT(*) AS count FROM research_records WHERE deleted_at IS NULL").get().count, 1);
+  assert.equal(afterConcurrent.prepare("SELECT COUNT(*) AS count FROM research_record_content_versions").get().count, 1);
+  assert.equal(afterConcurrent.prepare(`
+    SELECT COUNT(*) AS count FROM research_record_content_versions WHERE is_current = 1
+  `).get().count, 1);
+  afterConcurrent.close();
+});
+
 test("overlapping partial browser windows persist one merged canonical version", async () => {
   const { baseUrl } = await startServer();
   const { token } = await pair(baseUrl);
