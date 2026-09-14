@@ -80,6 +80,35 @@ function researchRecordFromRow(row) {
   };
 }
 
+function cognitionUpdateFromRow(row) {
+  if (!row) return null;
+  const sourceContext = JSON.parse(row.source_context);
+  return {
+    id: row.id,
+    topicId: row.topic_id,
+    recordId: row.record_id,
+    sourceContentVersionId: row.source_content_version_id,
+    sourceContentVersionNumber: row.source_content_version_number ?? null,
+    sourceRecordVersion: row.source_record_version,
+    sourceContext,
+    sourceRecordTitle: row.source_record_title ?? sourceContext.title ?? "",
+    sourceDeleted: row.source_deleted_at !== undefined && row.source_deleted_at !== null,
+    updateType: row.update_type,
+    newInformation: row.new_information,
+    impact: row.impact,
+    baseCurrentView: row.base_current_view,
+    proposedCurrentView: row.proposed_current_view,
+    baseTopicVersion: row.base_topic_version,
+    status: row.status,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    appliedAt: row.applied_at,
+    appliedTopicVersion: row.applied_topic_version,
+    rejectedAt: row.rejected_at,
+  };
+}
+
 function decodeContentRow(row) {
   if (!row) return null;
   const contentBuffer = gunzipSync(row.content_blob);
@@ -453,6 +482,241 @@ export class ResearchDatabase {
       isCurrent: Boolean(row.is_current),
       createdAt: row.created_at,
     }));
+  }
+
+  createCognitionUpdate(topicId, { recordId, sourceContentVersionId }) {
+    const topic = this.getTopic(topicId);
+    if (!topic) return { kind: "topic_not_found" };
+    const record = this.getResearchRecord(recordId);
+    if (!record) return { kind: "record_not_found" };
+    if (record.topicId === null) return { kind: "record_unclassified" };
+    if (record.topicId !== topicId) return { kind: "record_topic_mismatch" };
+
+    const contentVersions = this.database.prepare(`
+      SELECT id FROM research_record_content_versions WHERE record_id = ?
+    `).all(recordId);
+    let resolvedContentVersionId = null;
+    if (contentVersions.length > 0) {
+      if (!sourceContentVersionId) return { kind: "source_version_required" };
+      if (!contentVersions.some((candidate) => candidate.id === sourceContentVersionId)) {
+        return { kind: "source_version_invalid" };
+      }
+      resolvedContentVersionId = sourceContentVersionId;
+    } else if (record.captureAdapter !== "manual-v1") {
+      return { kind: "source_version_required" };
+    } else if (sourceContentVersionId !== null) {
+      return { kind: "source_version_invalid" };
+    }
+
+    const existingDraft = this.database.prepare(`
+      SELECT updates.*, records.title AS source_record_title,
+        records.deleted_at AS source_deleted_at,
+        source_versions.version_number AS source_content_version_number
+      FROM cognition_updates updates
+      LEFT JOIN research_records records ON records.id = updates.record_id
+      LEFT JOIN research_record_content_versions source_versions
+        ON source_versions.id = updates.source_content_version_id
+      WHERE updates.topic_id = ? AND updates.record_id = ? AND updates.status = 'draft'
+      ORDER BY updates.updated_at DESC, updates.id DESC LIMIT 1
+    `).get(topicId, recordId);
+    if (existingDraft) return { kind: "existing_draft", update: cognitionUpdateFromRow(existingDraft) };
+
+    const timestamp = now();
+    const id = randomUUID();
+    const sourceContext = {
+      title: record.title,
+      summary: record.summary,
+      note: record.note,
+      provider: record.provider,
+      kind: record.kind,
+    };
+    this.database.prepare(`
+      INSERT INTO cognition_updates (
+        id, topic_id, record_id, source_content_version_id, source_record_version,
+        source_context, update_type, new_information, impact, base_current_view,
+        proposed_current_view, base_topic_version, status, version, created_at,
+        updated_at, applied_at, applied_topic_version, rejected_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'add', '', '', ?, ?, ?, 'draft', 1, ?, ?, NULL, NULL, NULL)
+    `).run(
+      id, topicId, recordId, resolvedContentVersionId, record.version,
+      JSON.stringify(sourceContext), topic.currentView, topic.currentView, topic.version,
+      timestamp, timestamp,
+    );
+    return { kind: "created", update: this.getCognitionUpdate(id) };
+  }
+
+  getCognitionUpdate(id) {
+    return cognitionUpdateFromRow(this.database.prepare(`
+      SELECT updates.*, records.title AS source_record_title,
+        records.deleted_at AS source_deleted_at,
+        source_versions.version_number AS source_content_version_number
+      FROM cognition_updates updates
+      LEFT JOIN research_records records ON records.id = updates.record_id
+      LEFT JOIN research_record_content_versions source_versions
+        ON source_versions.id = updates.source_content_version_id
+      WHERE updates.id = ?
+    `).get(id));
+  }
+
+  listCognitionUpdates(topicId, { recordId = null } = {}) {
+    if (!this.database.prepare("SELECT 1 FROM topics WHERE id = ?").get(topicId)) return null;
+    return this.database.prepare(`
+      SELECT updates.*, records.title AS source_record_title,
+        records.deleted_at AS source_deleted_at,
+        source_versions.version_number AS source_content_version_number
+      FROM cognition_updates updates
+      LEFT JOIN research_records records ON records.id = updates.record_id
+      LEFT JOIN research_record_content_versions source_versions
+        ON source_versions.id = updates.source_content_version_id
+      WHERE updates.topic_id = ? AND (? IS NULL OR updates.record_id = ?)
+      ORDER BY updates.created_at DESC, updates.id DESC
+    `).all(topicId, recordId, recordId).map(cognitionUpdateFromRow);
+  }
+
+  updateCognitionUpdate(id, input) {
+    const current = this.getCognitionUpdate(id);
+    if (!current) return { kind: "not_found" };
+    if (current.status !== "draft") return { kind: "not_draft", status: current.status };
+    if (current.version !== input.version) return { kind: "conflict", currentVersion: current.version };
+    const next = { ...current, ...input.changes, version: current.version + 1, updatedAt: now() };
+    const result = this.database.prepare(`
+      UPDATE cognition_updates
+      SET update_type = ?, new_information = ?, impact = ?, proposed_current_view = ?,
+        version = ?, updated_at = ?
+      WHERE id = ? AND version = ? AND status = 'draft'
+    `).run(
+      next.updateType, next.newInformation, next.impact, next.proposedCurrentView,
+      next.version, next.updatedAt, id, input.version,
+    );
+    if (result.changes === 0) {
+      const latest = this.getCognitionUpdate(id);
+      return latest?.status !== "draft"
+        ? { kind: "not_draft", status: latest.status }
+        : { kind: "conflict", currentVersion: latest?.version };
+    }
+    return { kind: "updated", update: this.getCognitionUpdate(id) };
+  }
+
+  reloadCognitionUpdate(id, version) {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const update = this.getCognitionUpdate(id);
+      let failure = !update ? { kind: "not_found" }
+        : update.status !== "draft" ? { kind: "not_draft", status: update.status }
+        : update.version !== version ? { kind: "conflict", currentVersion: update.version } : null;
+      const topic = !failure ? this.getTopic(update.topicId) : null;
+      if (!failure && !topic) failure = { kind: "topic_not_found" };
+      if (failure) {
+        this.database.exec("ROLLBACK");
+        return failure;
+      }
+      this.database.prepare(`
+        UPDATE cognition_updates
+        SET base_current_view = ?, base_topic_version = ?, proposed_current_view = ?,
+            version = version + 1, updated_at = ?
+        WHERE id = ? AND version = ? AND status = 'draft'
+      `).run(topic.currentView, topic.version, topic.currentView, now(), id, version);
+      const refreshed = this.getCognitionUpdate(id);
+      this.database.exec("COMMIT");
+      return { kind: "updated", update: refreshed };
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  applyCognitionUpdate(id, version) {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const update = this.getCognitionUpdate(id);
+      if (!update) {
+        this.database.exec("ROLLBACK");
+        return { kind: "not_found" };
+      }
+      if (update.status === "applied") {
+        const topic = this.getTopic(update.topicId);
+        this.database.exec("COMMIT");
+        return { kind: "already_applied", update, topic };
+      }
+      if (update.status !== "draft") {
+        this.database.exec("ROLLBACK");
+        return { kind: "not_draft", status: update.status };
+      }
+      if (update.version !== version) {
+        this.database.exec("ROLLBACK");
+        return { kind: "conflict", currentVersion: update.version };
+      }
+      const topic = this.getTopic(update.topicId);
+      if (!topic) {
+        this.database.exec("ROLLBACK");
+        return { kind: "topic_not_found" };
+      }
+      if (topic.version !== update.baseTopicVersion) {
+        this.database.exec("ROLLBACK");
+        return { kind: "topic_conflict", currentVersion: topic.version };
+      }
+      const record = this.getResearchRecord(update.recordId);
+      if (!record) {
+        this.database.exec("ROLLBACK");
+        return { kind: "source_unavailable" };
+      }
+      if (record.topicId !== update.topicId) {
+        this.database.exec("ROLLBACK");
+        return { kind: "record_topic_mismatch" };
+      }
+      if (update.sourceContentVersionId && !this.database.prepare(`
+        SELECT 1 FROM research_record_content_versions WHERE id = ? AND record_id = ?
+      `).get(update.sourceContentVersionId, update.recordId)) {
+        this.database.exec("ROLLBACK");
+        return { kind: "source_version_invalid" };
+      }
+      if (!update.newInformation || !update.impact) {
+        this.database.exec("ROLLBACK");
+        return { kind: "incomplete" };
+      }
+      if (update.updateType === "uncertain" && update.proposedCurrentView !== update.baseCurrentView) {
+        this.database.exec("ROLLBACK");
+        return { kind: "uncertain_changes_view" };
+      }
+
+      const timestamp = now();
+      let appliedTopicVersion = topic.version;
+      if (update.proposedCurrentView !== topic.currentView) {
+        const topicResult = this.database.prepare(`
+          UPDATE topics SET current_view = ?, version = version + 1, updated_at = ?
+          WHERE id = ? AND version = ?
+        `).run(update.proposedCurrentView, timestamp, topic.id, topic.version);
+        if (topicResult.changes !== 1) throw new Error("Topic changed during cognition update apply");
+        appliedTopicVersion += 1;
+      }
+      const updateResult = this.database.prepare(`
+        UPDATE cognition_updates
+        SET status = 'applied', version = version + 1, updated_at = ?, applied_at = ?,
+          applied_topic_version = ?
+        WHERE id = ? AND version = ? AND status = 'draft'
+      `).run(timestamp, timestamp, appliedTopicVersion, id, version);
+      if (updateResult.changes !== 1) throw new Error("Cognition update changed during apply");
+      this.database.exec("COMMIT");
+      return { kind: "applied", update: this.getCognitionUpdate(id), topic: this.getTopic(topic.id) };
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  rejectCognitionUpdate(id, version) {
+    const current = this.getCognitionUpdate(id);
+    if (!current) return { kind: "not_found" };
+    if (current.status !== "draft") return { kind: "not_draft", status: current.status };
+    if (current.version !== version) return { kind: "conflict", currentVersion: current.version };
+    const timestamp = now();
+    const result = this.database.prepare(`
+      UPDATE cognition_updates
+      SET status = 'rejected', version = version + 1, updated_at = ?, rejected_at = ?
+      WHERE id = ? AND version = ? AND status = 'draft'
+    `).run(timestamp, timestamp, id, version);
+    if (result.changes !== 1) return { kind: "conflict", currentVersion: this.getCognitionUpdate(id)?.version };
+    return { kind: "rejected", update: this.getCognitionUpdate(id) };
   }
 
   findImportedDuplicate(provider, externalId, sourceFingerprint) {

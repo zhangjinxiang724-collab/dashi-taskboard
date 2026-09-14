@@ -252,6 +252,45 @@ const RESEARCH_MIGRATIONS = [
       `);
     },
   },
+  {
+    version: "006_cognition_updates",
+    up(database) {
+      database.exec(`
+        CREATE TABLE cognition_updates (
+          id TEXT PRIMARY KEY,
+          topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE RESTRICT,
+          record_id TEXT NOT NULL REFERENCES research_records(id) ON DELETE RESTRICT,
+          source_content_version_id TEXT REFERENCES research_record_content_versions(id) ON DELETE RESTRICT,
+          source_record_version INTEGER NOT NULL CHECK (source_record_version > 0),
+          source_context TEXT NOT NULL DEFAULT '{}',
+          update_type TEXT NOT NULL CHECK (update_type IN ('add', 'reinforce', 'revise', 'uncertain')),
+          new_information TEXT NOT NULL DEFAULT '',
+          impact TEXT NOT NULL DEFAULT '',
+          base_current_view TEXT NOT NULL,
+          proposed_current_view TEXT NOT NULL,
+          base_topic_version INTEGER NOT NULL CHECK (base_topic_version > 0),
+          status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'applied', 'rejected')),
+          version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          applied_at TEXT,
+          applied_topic_version INTEGER CHECK (applied_topic_version IS NULL OR applied_topic_version > 0),
+          rejected_at TEXT,
+          CHECK (
+            (status = 'draft' AND applied_at IS NULL AND applied_topic_version IS NULL AND rejected_at IS NULL)
+            OR (status = 'applied' AND applied_at IS NOT NULL AND applied_topic_version IS NOT NULL AND rejected_at IS NULL)
+            OR (status = 'rejected' AND applied_at IS NULL AND applied_topic_version IS NULL AND rejected_at IS NOT NULL)
+          )
+        );
+        CREATE INDEX cognition_updates_topic_created
+          ON cognition_updates(topic_id, created_at DESC, id);
+        CREATE INDEX cognition_updates_record_created
+          ON cognition_updates(record_id, created_at DESC, id);
+        CREATE INDEX cognition_updates_topic_status
+          ON cognition_updates(topic_id, status, updated_at DESC, id);
+      `);
+    },
+  },
 ];
 
 function appliedVersions(database) {

@@ -181,6 +181,6 @@ test("Inbox assignments are all-or-nothing and create Topic plus assignment atom
   );
   assert.equal((await request(baseUrl, "/api/research/inbox/summary")).body.count, 0);
   assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
-  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM research_schema_migrations WHERE version LIKE '006_%'").get().count, 0);
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM research_schema_migrations WHERE version = '006_cognition_updates'").get().count, 1);
   database.close();
 });

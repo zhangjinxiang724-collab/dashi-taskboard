@@ -271,6 +271,11 @@ test("004 migration backs up a 003 database and preserves Phase 3 records", asyn
   const database = new DatabaseSync(databasePath);
   try {
     database.exec(`
+      DROP INDEX cognition_updates_topic_created;
+      DROP INDEX cognition_updates_record_created;
+      DROP INDEX cognition_updates_topic_status;
+      DROP TABLE cognition_updates;
+      DELETE FROM research_schema_migrations WHERE version = '006_cognition_updates';
       DROP INDEX research_record_content_versions_current;
       DROP INDEX research_record_content_versions_history;
       DROP INDEX research_capture_clients_active_extension;
@@ -305,10 +310,11 @@ test("004 migration backs up a 003 database and preserves Phase 3 records", asyn
       );
     `);
     const research = new ResearchDatabase(database, { databasePath });
-    assert.deepEqual(research.migrationResult.applied, ["004_chatgpt_historical_import", "005_browser_capture"]);
+    assert.deepEqual(research.migrationResult.applied, ["004_chatgpt_historical_import", "005_browser_capture", "006_cognition_updates"]);
     assert.equal(research.getResearchRecord("phase3-record").title, "已有研究记录");
     assert.ok(database.prepare("SELECT 1 FROM research_schema_migrations WHERE version = '004_chatgpt_historical_import'").get());
     assert.ok(database.prepare("SELECT 1 FROM research_schema_migrations WHERE version = '005_browser_capture'").get());
+    assert.ok(database.prepare("SELECT 1 FROM research_schema_migrations WHERE version = '006_cognition_updates'").get());
     assert.ok(database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'research_record_contents'").get());
     assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
   } finally {

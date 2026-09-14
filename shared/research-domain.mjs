@@ -23,6 +23,8 @@ export const RESEARCH_RECORD_KINDS = [
   "agent_run",
   "other",
 ];
+export const COGNITION_UPDATE_TYPES = ["add", "reinforce", "revise", "uncertain"];
+export const COGNITION_UPDATE_STATUSES = ["draft", "applied", "rejected"];
 
 export function isResearchStatus(value) {
   return RESEARCH_STATUSES.includes(value);
@@ -42,4 +44,8 @@ export function isResearchRecordProvider(value) {
 
 export function isResearchRecordKind(value) {
   return RESEARCH_RECORD_KINDS.includes(value);
+}
+
+export function isCognitionUpdateType(value) {
+  return COGNITION_UPDATE_TYPES.includes(value);
 }

@@ -1,4 +1,5 @@
 import {
+  isCognitionUpdateType,
   isConfidenceLevel,
   isResearchRecordKind,
   isResearchRecordProvider,
@@ -25,6 +26,10 @@ const CAPTURE_PREVIEW_PATH = /^\/api\/research\/captures\/browser\/previews\/([^
 const CAPTURE_PREVIEW_BATCH_PATH = /^\/api\/research\/captures\/browser\/previews\/([^/]+)\/batches$/;
 const CAPTURE_PREVIEW_FINALIZE_PATH = /^\/api\/research\/captures\/browser\/previews\/([^/]+)\/finalize$/;
 const CAPTURE_PREVIEW_CONFIRM_PATH = /^\/api\/research\/captures\/browser\/previews\/([^/]+)\/confirm$/;
+const TOPIC_COGNITION_UPDATES_PATH = /^\/api\/research\/topics\/([^/]+)\/cognition-updates$/;
+const COGNITION_UPDATE_PATH = /^\/api\/research\/cognition-updates\/([^/]+)$/;
+const COGNITION_UPDATE_APPLY_PATH = /^\/api\/research\/cognition-updates\/([^/]+)\/apply$/;
+const COGNITION_UPDATE_REJECT_PATH = /^\/api\/research\/cognition-updates\/([^/]+)\/reject$/;
 
 function assertPlainObject(value, ApiError) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -184,6 +189,52 @@ function parseResearchRecordUpdate(body, ApiError) {
     throw new ApiError(400, "INVALID_BODY", "At least one research record field must be changed");
   }
   return { version, changes };
+}
+
+function parseCognitionUpdateCreate(body, ApiError) {
+  assertPlainObject(body, ApiError);
+  assertAllowedKeys(body, new Set(["recordId", "sourceContentVersionId"]), ApiError);
+  return {
+    recordId: text(body.recordId, "recordId", ApiError, { required: true, maxLength: 1_000 }),
+    sourceContentVersionId: nullableText(body.sourceContentVersionId, "sourceContentVersionId", ApiError, { maxLength: 1_000 }),
+  };
+}
+
+function parseCognitionUpdatePatch(body, ApiError) {
+  assertPlainObject(body, ApiError);
+  assertAllowedKeys(body, new Set([
+    "version", "updateType", "newInformation", "impact", "proposedCurrentView",
+  ]), ApiError);
+  const version = positiveVersion(body.version, ApiError);
+  const changes = {};
+  if (body.updateType !== undefined) {
+    if (!isCognitionUpdateType(body.updateType)) {
+      throw new ApiError(400, "INVALID_FIELD", "updateType is not supported");
+    }
+    changes.updateType = body.updateType;
+  }
+  if (body.newInformation !== undefined) {
+    changes.newInformation = text(body.newInformation, "newInformation", ApiError);
+  }
+  if (body.impact !== undefined) changes.impact = text(body.impact, "impact", ApiError);
+  if (body.proposedCurrentView !== undefined) {
+    changes.proposedCurrentView = text(body.proposedCurrentView, "proposedCurrentView", ApiError);
+  }
+  if (Object.keys(changes).length === 0) {
+    throw new ApiError(400, "INVALID_BODY", "At least one cognition update field must be changed");
+  }
+  return { version, changes };
+}
+
+function cognitionUpdateResult(result, ApiError) {
+  if (result.kind === "not_found") throw new ApiError(404, "COGNITION_UPDATE_NOT_FOUND", "Cognition update not found");
+  if (result.kind === "conflict") {
+    throw new ApiError(409, "COGNITION_UPDATE_VERSION_CONFLICT", "Cognition update was changed by another request", { currentVersion: result.currentVersion });
+  }
+  if (result.kind === "not_draft") {
+    throw new ApiError(409, "COGNITION_UPDATE_NOT_DRAFT", "Only draft cognition updates can be changed", { status: result.status });
+  }
+  return result.update;
 }
 
 function parseCreate(body, ApiError) {
@@ -769,6 +820,109 @@ export async function handleResearchRequest({
     const versions = research.listResearchRecordContentVersions(decodeURIComponent(contentVersionsMatch[1]));
     if (!versions) throw new ApiError(404, "RESEARCH_RECORD_NOT_FOUND", "Research record not found");
     sendJson(response, 200, { versions });
+    return true;
+  }
+
+  const cognitionUpdatesMatch = pathname.match(TOPIC_COGNITION_UPDATES_PATH);
+  if (cognitionUpdatesMatch) {
+    const topicId = decodeURIComponent(cognitionUpdatesMatch[1]);
+    if (request.method === "GET") {
+      for (const key of url.searchParams.keys()) {
+        if (key !== "recordId" || url.searchParams.getAll(key).length !== 1) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Cognition update list only accepts one recordId parameter");
+        }
+      }
+      const updates = research.listCognitionUpdates(topicId, { recordId: url.searchParams.get("recordId") });
+      if (!updates) throw new ApiError(404, "TOPIC_NOT_FOUND", "Topic not found");
+      sendJson(response, 200, { updates });
+      return true;
+    }
+    if (request.method === "POST") {
+      if ([...url.searchParams.keys()].length > 0) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Cognition update creation does not accept query parameters");
+      const result = research.createCognitionUpdate(topicId, parseCognitionUpdateCreate(await readJson(request), ApiError));
+      if (result.kind === "topic_not_found") throw new ApiError(404, "TOPIC_NOT_FOUND", "Topic not found");
+      if (result.kind === "record_not_found") throw new ApiError(404, "RESEARCH_RECORD_NOT_FOUND", "Research record not found");
+      if (result.kind === "record_unclassified") throw new ApiError(409, "RESEARCH_RECORD_UNCLASSIFIED", "Research record must be assigned to a topic first");
+      if (result.kind === "record_topic_mismatch") throw new ApiError(409, "RESEARCH_RECORD_TOPIC_MISMATCH", "Research record belongs to another topic");
+      if (result.kind === "source_version_required") throw new ApiError(400, "SOURCE_CONTENT_VERSION_REQUIRED", "The content version being read is required");
+      if (result.kind === "source_version_invalid") throw new ApiError(400, "SOURCE_CONTENT_VERSION_INVALID", "The content version does not belong to this research record");
+      sendJson(response, result.kind === "created" ? 201 : 200, { update: result.update, existing: result.kind === "existing_draft" });
+      return true;
+    }
+    methodNotAllowed(response, ["GET", "POST"]);
+    return true;
+  }
+
+  const cognitionReloadMatch = pathname.match(/^\/api\/research\/cognition-updates\/([^/]+)\/reload$/);
+  if (cognitionReloadMatch) {
+    if (request.method !== "POST") {
+      methodNotAllowed(response, ["POST"]);
+      return true;
+    }
+    if ([...url.searchParams.keys()].length > 0) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Reload does not accept query parameters");
+    const result = research.reloadCognitionUpdate(decodeURIComponent(cognitionReloadMatch[1]), parseVersionOnly(await readJson(request), ApiError));
+    if (result.kind === "topic_not_found") throw new ApiError(404, "TOPIC_NOT_FOUND", "Topic not found");
+    const update = cognitionUpdateResult(result, ApiError);
+    sendJson(response, 200, { update });
+    return true;
+  }
+
+  const cognitionApplyMatch = pathname.match(COGNITION_UPDATE_APPLY_PATH);
+  if (cognitionApplyMatch) {
+    if (request.method !== "POST") {
+      methodNotAllowed(response, ["POST"]);
+      return true;
+    }
+    if ([...url.searchParams.keys()].length > 0) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Apply does not accept query parameters");
+    const result = research.applyCognitionUpdate(decodeURIComponent(cognitionApplyMatch[1]), parseVersionOnly(await readJson(request), ApiError));
+    if (result.kind === "not_found") throw new ApiError(404, "COGNITION_UPDATE_NOT_FOUND", "Cognition update not found");
+    if (result.kind === "conflict") throw new ApiError(409, "COGNITION_UPDATE_VERSION_CONFLICT", "Cognition update was changed by another request", { currentVersion: result.currentVersion });
+    if (result.kind === "not_draft") throw new ApiError(409, "COGNITION_UPDATE_NOT_DRAFT", "Only draft cognition updates can be applied", { status: result.status });
+    if (result.kind === "topic_not_found") throw new ApiError(404, "TOPIC_NOT_FOUND", "Topic not found");
+    if (result.kind === "topic_conflict") throw new ApiError(409, "COGNITION_TOPIC_VERSION_CONFLICT", "Current view changed while this update was being edited", { currentVersion: result.currentVersion });
+    if (result.kind === "source_unavailable") throw new ApiError(409, "COGNITION_SOURCE_UNAVAILABLE", "The source research record is no longer available");
+    if (result.kind === "record_topic_mismatch") throw new ApiError(409, "RESEARCH_RECORD_TOPIC_MISMATCH", "Research record no longer belongs to this topic");
+    if (result.kind === "source_version_invalid") throw new ApiError(409, "SOURCE_CONTENT_VERSION_INVALID", "The source content version is no longer available");
+    if (result.kind === "incomplete") throw new ApiError(400, "COGNITION_UPDATE_INCOMPLETE", "New information and impact are required");
+    if (result.kind === "uncertain_changes_view") throw new ApiError(400, "UNCERTAIN_CANNOT_CHANGE_VIEW", "An uncertain update must keep the current view unchanged");
+    sendJson(response, 200, { update: result.update, topic: result.topic, alreadyApplied: result.kind === "already_applied" });
+    return true;
+  }
+
+  const cognitionRejectMatch = pathname.match(COGNITION_UPDATE_REJECT_PATH);
+  if (cognitionRejectMatch) {
+    if (request.method !== "POST") {
+      methodNotAllowed(response, ["POST"]);
+      return true;
+    }
+    if ([...url.searchParams.keys()].length > 0) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Reject does not accept query parameters");
+    const update = cognitionUpdateResult(
+      research.rejectCognitionUpdate(decodeURIComponent(cognitionRejectMatch[1]), parseVersionOnly(await readJson(request), ApiError)),
+      ApiError,
+    );
+    sendJson(response, 200, { update });
+    return true;
+  }
+
+  const cognitionUpdateMatch = pathname.match(COGNITION_UPDATE_PATH);
+  if (cognitionUpdateMatch) {
+    const updateId = decodeURIComponent(cognitionUpdateMatch[1]);
+    if ([...url.searchParams.keys()].length > 0) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Cognition update does not accept query parameters");
+    if (request.method === "GET") {
+      const update = research.getCognitionUpdate(updateId);
+      if (!update) throw new ApiError(404, "COGNITION_UPDATE_NOT_FOUND", "Cognition update not found");
+      sendJson(response, 200, { update });
+      return true;
+    }
+    if (request.method === "PATCH") {
+      const update = cognitionUpdateResult(
+        research.updateCognitionUpdate(updateId, parseCognitionUpdatePatch(await readJson(request), ApiError)),
+        ApiError,
+      );
+      sendJson(response, 200, { update });
+      return true;
+    }
+    methodNotAllowed(response, ["GET", "PATCH"]);
     return true;
   }
 

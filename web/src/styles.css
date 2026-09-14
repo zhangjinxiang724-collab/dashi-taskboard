@@ -45,6 +45,307 @@
   --dialog-shadow: 0 20px 50px rgba(0, 0, 0, 0.17), 0 2px 10px rgba(0, 0, 0, 0.08);
 }
 
+/* Phase 3.8.1 cognition update: a quiet, record-led editing surface. */
+.cognition-update-backdrop {
+  position: fixed;
+  z-index: 1800;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 24px;
+  background: rgb(20 20 20 / 18%);
+}
+
+.cognition-update-editor {
+  display: flex;
+  width: min(680px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--dialog-shadow);
+}
+
+.cognition-update-editor > header,
+.cognition-update-editor > footer,
+.cognition-update-editor > footer > div,
+.cognition-history-toggle,
+.cognition-update-history summary,
+.cognition-update-history summary > span {
+  display: flex;
+  align-items: center;
+}
+
+.cognition-update-editor > header,
+.cognition-update-editor > footer {
+  flex-shrink: 0;
+  padding: 18px 24px;
+}
+
+.cognition-update-body {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 4px 24px 22px;
+}
+
+.cognition-update-editor header p,
+.cognition-unchanged {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.cognition-update-editor footer button,
+.cognition-optional-view {
+  font: inherit;
+  font-size: 13px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 8px 0;
+  cursor: pointer;
+}
+
+.cognition-optional-view { align-self: flex-start; }
+.cognition-conflict {
+  flex-shrink: 0;
+  padding: 12px 24px;
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.cognition-conflict button {
+  display: block;
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.cognition-update-editor footer .button.primary { padding: 9px 16px; background: var(--text-primary); color: var(--surface); }
+
+.cognition-update-editor > header,
+.cognition-update-editor > footer,
+.cognition-history-toggle,
+.cognition-update-history summary {
+  justify-content: space-between;
+}
+
+.cognition-update-editor > header > div > span,
+.cognition-update-base > span,
+.cognition-update-field > span,
+.cognition-update-history section > span {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.cognition-update-editor h2 {
+  margin: 2px 0 3px;
+  font-size: 22px;
+}
+
+.cognition-update-editor header p,
+.cognition-update-editor p {
+  margin: 0;
+}
+
+.cognition-update-editor > header > button {
+  align-self: flex-start;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 22px;
+}
+
+.cognition-update-base {
+  padding: 0 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cognition-update-base p {
+  margin-top: 5px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.cognition-update-types {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.cognition-update-types legend {
+  grid-column: 1 / -1;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cognition-update-types label {
+  display: flex;
+  gap: 9px;
+  padding: 8px 10px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.cognition-update-types input { accent-color: var(--text-primary); }
+
+.cognition-update-types label.is-selected {
+  border-color: var(--border-strong);
+  background: var(--surface-muted);
+}
+
+.cognition-update-types label > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cognition-update-types strong {
+  font-size: 13px;
+}
+
+.cognition-update-types small,
+.cognition-update-field small {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.cognition-update-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cognition-update-field > span {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cognition-update-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.cognition-update-editor > footer {
+  gap: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.cognition-update-editor > footer > div {
+  gap: 8px;
+}
+
+.cognition-update-history {
+  grid-column: 1 / -1;
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.cognition-history-toggle {
+  width: 100%;
+  padding: 16px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.cognition-history-toggle small {
+  margin-left: 5px;
+  color: var(--text-tertiary);
+}
+
+.cognition-history-list details {
+  border-top: 1px solid var(--border);
+}
+
+.cognition-update-history summary {
+  padding: 13px 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.cognition-update-history summary > span {
+  gap: 9px;
+}
+
+.cognition-update-history summary small,
+.cognition-update-history time,
+.cognition-update-history em {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.cognition-update-history em {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+}
+
+.cognition-update-history details > div {
+  display: grid;
+  gap: 14px;
+  padding: 4px 0 18px;
+}
+
+.cognition-update-history section p {
+  margin: 4px 0 0;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.cognition-history-views {
+  display: grid;
+  gap: 8px;
+}
+
+@media (max-width: 700px) {
+  .cognition-update-types {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .cognition-update-editor > footer {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+  .cognition-update-editor > footer > div {
+    justify-content: flex-end;
+  }
+}
+
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #171719;

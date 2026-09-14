@@ -4,11 +4,13 @@ import { ApiError } from "../api";
 import { useTaskboardI18n } from "../i18n";
 import {
   createResearchRecord,
+  createCognitionUpdate,
   deleteResearchRecord,
   listResearchRecords,
   updateResearchRecord,
 } from "../researchApi";
-import type { ResearchRecord, ResearchRecordDraft } from "../researchTypes";
+import type { CognitionUpdate, ResearchRecord, ResearchRecordDraft, TopicDetail } from "../researchTypes";
+import { CognitionUpdateEditor } from "./CognitionUpdateEditor";
 import {
   ResearchRecordEditor,
   researchRecordKindLabel,
@@ -28,7 +30,15 @@ function sortRecords(records: ResearchRecord[]) {
   });
 }
 
-export function ResearchRecordSection({ topicId }: { topicId: string }) {
+export function ResearchRecordSection({
+  topicId,
+  onTopicChange,
+  onCognitionChanged,
+}: {
+  topicId: string;
+  onTopicChange: (topic: TopicDetail) => void;
+  onCognitionChanged: () => void;
+}) {
   const { text } = useTaskboardI18n();
   const [records, setRecords] = useState<ResearchRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,6 +46,7 @@ export function ResearchRecordSection({ topicId }: { topicId: string }) {
   const [editorRecord, setEditorRecord] = useState<ResearchRecord | null | undefined>(undefined);
   const [pending, setPending] = useState(false);
   const [readerRecord, setReaderRecord] = useState<ResearchRecord | null>(null);
+  const [cognitionUpdate, setCognitionUpdate] = useState<CognitionUpdate | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -91,6 +102,22 @@ export function ResearchRecordSection({ topicId }: { topicId: string }) {
     }
   }
 
+  async function startCognitionUpdate(record: ResearchRecord, sourceContentVersionId: string | null) {
+    setPending(true);
+    setError(null);
+    try {
+      const result = await createCognitionUpdate(topicId, record.id, sourceContentVersionId);
+      setReaderRecord(null);
+      setCognitionUpdate(result.update);
+    } catch (createError) {
+      setError(createError instanceof ApiError && createError.code === "RESEARCH_RECORD_UNCLASSIFIED"
+        ? "请先把这条资料归入一个主题。"
+        : errorMessage(createError));
+    } finally {
+      setPending(false);
+    }
+  }
+
   const dateFormatter = new Intl.DateTimeFormat(undefined, {
     year: "numeric",
     month: "2-digit",
@@ -132,9 +159,7 @@ export function ResearchRecordSection({ topicId }: { topicId: string }) {
                 {record.note && <p className="research-record-note">{record.note}</p>}
               </div>
               <div className="research-record-actions">
-                {record.captureAdapter !== "manual-v1" && (
-                  <button type="button" disabled={pending} onClick={() => setReaderRecord(record)}>{text("查看内容", "View content")}</button>
-                )}
+                <button type="button" disabled={pending} onClick={() => setReaderRecord(record)}>{text("查看内容", "View content")}</button>
                 {record.url && (
                   <a href={record.url} target="_blank" rel="noopener noreferrer">{text("打开原对话 ↗", "Open original ↗")}</a>
                 )}
@@ -158,7 +183,21 @@ export function ResearchRecordSection({ topicId }: { topicId: string }) {
           onSubmit={(draft) => void save(draft)}
         />
       )}
-      {readerRecord && <ResearchRecordReader record={readerRecord} onClose={() => setReaderRecord(null)} />}
+      {readerRecord && <ResearchRecordReader
+        record={readerRecord}
+        onClose={() => setReaderRecord(null)}
+        actions={({ sourceContentVersionId }) => (
+          <button className="button primary" type="button" disabled={pending} onClick={() => void startCognitionUpdate(readerRecord, sourceContentVersionId)}>
+            更新认知
+          </button>
+        )}
+      />}
+      {cognitionUpdate && <CognitionUpdateEditor
+        initialUpdate={cognitionUpdate}
+        onClose={() => setCognitionUpdate(null)}
+        onApplied={onTopicChange}
+        onChanged={onCognitionChanged}
+      />}
     </section>
   );
 }

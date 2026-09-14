@@ -16,6 +16,8 @@ import type {
   BrowserCapturePreview,
   ResearchCaptureClient,
   ResearchInboxPage,
+  CognitionUpdate,
+  CognitionUpdateType,
 } from "./researchTypes";
 
 export async function listTopics(signal?: AbortSignal): Promise<Topic[]> {
@@ -311,6 +313,65 @@ export async function listResearchRecordContentVersions(recordId: string): Promi
   );
   return data.versions;
 }
+
+export async function createCognitionUpdate(
+  topicId: string,
+  recordId: string,
+  sourceContentVersionId: string | null,
+): Promise<{ update: CognitionUpdate; existing: boolean }> {
+  return request(`/api/research/topics/${encodeURIComponent(topicId)}/cognition-updates`, {
+    method: "POST",
+    body: JSON.stringify({ recordId, sourceContentVersionId }),
+  });
+}
+
+export async function listCognitionUpdates(topicId: string, recordId?: string): Promise<CognitionUpdate[]> {
+  const query = recordId ? `?recordId=${encodeURIComponent(recordId)}` : "";
+  const data = await request<{ updates: CognitionUpdate[] }>(
+    `/api/research/topics/${encodeURIComponent(topicId)}/cognition-updates${query}`,
+  );
+  return data.updates;
+}
+
+export async function updateCognitionUpdate(
+  update: CognitionUpdate,
+  changes: Partial<Pick<CognitionUpdate, "updateType" | "newInformation" | "impact" | "proposedCurrentView">>,
+): Promise<CognitionUpdate> {
+  const data = await request<{ update: CognitionUpdate }>(
+    `/api/research/cognition-updates/${encodeURIComponent(update.id)}`,
+    { method: "PATCH", body: JSON.stringify({ version: update.version, ...changes }) },
+  );
+  return data.update;
+}
+
+export async function reloadCognitionUpdate(update: CognitionUpdate): Promise<CognitionUpdate> {
+  const data = await request<{ update: CognitionUpdate }>(
+    `/api/research/cognition-updates/${encodeURIComponent(update.id)}/reload`,
+    { method: "POST", body: JSON.stringify({ version: update.version }) },
+  );
+  return data.update;
+}
+
+export async function applyCognitionUpdate(update: CognitionUpdate): Promise<{ update: CognitionUpdate; topic: TopicDetail }> {
+  return request(`/api/research/cognition-updates/${encodeURIComponent(update.id)}/apply`, {
+    method: "POST", body: JSON.stringify({ version: update.version }),
+  });
+}
+
+export async function rejectCognitionUpdate(update: CognitionUpdate): Promise<CognitionUpdate> {
+  const data = await request<{ update: CognitionUpdate }>(
+    `/api/research/cognition-updates/${encodeURIComponent(update.id)}/reject`,
+    { method: "POST", body: JSON.stringify({ version: update.version }) },
+  );
+  return data.update;
+}
+
+export type CognitionUpdateChanges = {
+  updateType: CognitionUpdateType;
+  newInformation: string;
+  impact: string;
+  proposedCurrentView: string;
+};
 
 export async function startBrowserCapturePairing(): Promise<{ code: string; expiresAt: string }> {
   const data = await request<{ pairing: { code: string; expiresAt: string } }>(

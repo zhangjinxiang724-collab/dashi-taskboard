@@ -13,12 +13,15 @@ export const CONFIDENCE_LEVELS = ["low", "medium", "high"] as const;
 export const TOPIC_QUESTION_STATUSES = ["open", "resolved", "dropped"] as const;
 export const RESEARCH_RECORD_PROVIDERS = ["chatgpt", "codex", "claude", "gemini", "other"] as const;
 export const RESEARCH_RECORD_KINDS = ["chat", "deep_research", "workspace", "agent_run", "other"] as const;
+export const COGNITION_UPDATE_TYPES = ["add", "reinforce", "revise", "uncertain"] as const;
 
 export type ResearchStatus = (typeof RESEARCH_STATUSES)[number];
 export type ConfidenceLevel = (typeof CONFIDENCE_LEVELS)[number];
 export type TopicQuestionStatus = (typeof TOPIC_QUESTION_STATUSES)[number];
 export type ResearchRecordProvider = (typeof RESEARCH_RECORD_PROVIDERS)[number];
 export type ResearchRecordKind = (typeof RESEARCH_RECORD_KINDS)[number];
+export type CognitionUpdateType = (typeof COGNITION_UPDATE_TYPES)[number];
+export type CognitionUpdateStatus = "draft" | "applied" | "rejected";
 
 export interface ResearchTaskSummary {
   id: string;
@@ -103,6 +106,37 @@ export interface ResearchRecordDraft {
   summary: string;
   note: string;
   occurredAt: string;
+}
+
+export interface CognitionUpdate {
+  id: string;
+  topicId: string;
+  recordId: string;
+  sourceContentVersionId: string | null;
+  sourceContentVersionNumber: number | null;
+  sourceRecordVersion: number;
+  sourceContext: {
+    title?: string;
+    summary?: string;
+    note?: string;
+    provider?: ResearchRecordProvider;
+    kind?: ResearchRecordKind;
+  };
+  sourceRecordTitle: string;
+  sourceDeleted: boolean;
+  updateType: CognitionUpdateType;
+  newInformation: string;
+  impact: string;
+  baseCurrentView: string;
+  proposedCurrentView: string;
+  baseTopicVersion: number;
+  status: CognitionUpdateStatus;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  appliedAt: string | null;
+  appliedTopicVersion: number | null;
+  rejectedAt: string | null;
 }
 
 export interface ResearchInboxItem extends ResearchRecord {

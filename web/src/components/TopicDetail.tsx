@@ -18,6 +18,7 @@ import type { Task } from "../types";
 import { confidenceLabel, researchStatusLabel } from "./TopicEditor";
 import { TopicQuestionList } from "./TopicQuestionList";
 import { ResearchRecordSection } from "./ResearchRecordSection";
+import { CognitionUpdateHistory } from "./CognitionUpdateHistory";
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -57,6 +58,7 @@ export function TopicDetail({
   const { text } = useTaskboardI18n();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [cognitionRefreshKey, setCognitionRefreshKey] = useState(0);
   const [linkTaskId, setLinkTaskId] = useState("");
 
   const linkedTaskIds = useMemo(
@@ -235,7 +237,12 @@ export function TopicDetail({
         )}
       </section>
 
-      <ResearchRecordSection topicId={topic.id} />
+      <ResearchRecordSection
+        topicId={topic.id}
+        onTopicChange={onChange}
+        onCognitionChanged={() => setCognitionRefreshKey((value) => value + 1)}
+      />
+      <CognitionUpdateHistory topicId={topic.id} refreshKey={cognitionRefreshKey} />
     </section>
   );
 }
