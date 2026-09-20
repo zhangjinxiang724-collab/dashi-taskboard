@@ -139,6 +139,14 @@ export interface CognitionUpdate {
   rejectedAt: string | null;
 }
 
+export interface CognitionAiDraft {
+  updateType: CognitionUpdateType;
+  newInformation: string;
+  impact: string;
+  proposedCurrentView: string;
+  sourceTextComplete: boolean;
+}
+
 export interface ResearchInboxItem extends ResearchRecord {
   preview: string;
   contentAvailable: boolean;

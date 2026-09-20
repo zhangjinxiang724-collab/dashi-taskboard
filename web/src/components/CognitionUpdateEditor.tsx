@@ -1,8 +1,8 @@
 import { useState } from "react";
 
 import { ApiError } from "../api";
-import { applyCognitionUpdate, reloadCognitionUpdate, rejectCognitionUpdate, updateCognitionUpdate } from "../researchApi";
-import type { CognitionUpdate, CognitionUpdateType, TopicDetail } from "../researchTypes";
+import { applyCognitionUpdate, generateCognitionAiDraft, reloadCognitionUpdate, rejectCognitionUpdate, updateCognitionUpdate } from "../researchApi";
+import type { CognitionAiDraft, CognitionUpdate, CognitionUpdateType, TopicDetail } from "../researchTypes";
 
 const TYPE_OPTIONS: Array<{ value: CognitionUpdateType; label: string }> = [
   { value: "add", label: "新增" },
@@ -25,6 +25,15 @@ function readableError(error: unknown) {
     if (error.code === "COGNITION_UPDATE_INCOMPLETE") {
       return "请填写这条资料带来的新信息，以及它对原判断的影响。";
     }
+    if (error.code === "RESEARCH_AI_NOT_CONFIGURED") return "AI 起草尚未配置。";
+    if (error.code === "RESEARCH_AI_SOURCE_TOO_LONG") return "这条资料太长，暂时无法完整起草认知更新。";
+    if (error.code === "RESEARCH_AI_TIMEOUT") return "AI 起草超时，请稍后重试。";
+    if (error.code === "RESEARCH_AI_DRAFT_FAILED") return "AI 起草失败，请稍后重试。";
+    if (error.code === "SOURCE_CONTENT_VERSION_INVALID") return "这份认知更新锁定的资料版本已经不可用。";
+    if (error.code === "RESEARCH_RECORD_TOPIC_MISMATCH") return "这条资料已经不属于当前主题。";
+    if (error.code === "COGNITION_UPDATE_NOT_DRAFT") return "这份认知更新已经完成，不能再次起草。";
+    if (error.code === "COGNITION_UPDATE_NOT_FOUND") return "这份认知更新已经不存在。";
+    if (error.code === "TOPIC_NOT_FOUND") return "当前主题已经不存在。";
   }
   return error instanceof Error ? error.message : String(error);
 }
@@ -34,11 +43,13 @@ export function CognitionUpdateEditor({
   onClose,
   onApplied,
   onChanged,
+  sourceTextComplete = true,
 }: {
   initialUpdate: CognitionUpdate;
   onClose: () => void;
   onApplied: (topic: TopicDetail) => void;
   onChanged?: () => void;
+  sourceTextComplete?: boolean;
 }) {
   const [update, setUpdate] = useState(initialUpdate);
   const [updateType, setUpdateType] = useState(initialUpdate.updateType);
@@ -49,9 +60,38 @@ export function CognitionUpdateEditor({
   const [error, setError] = useState<string | null>(null);
   const [topicConflict, setTopicConflict] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [aiPending, setAiPending] = useState(false);
+  const [aiDraft, setAiDraft] = useState<CognitionAiDraft | null>(null);
   const [editReinforcedView, setEditReinforcedView] = useState(initialUpdate.proposedCurrentView !== initialUpdate.baseCurrentView);
   const unchanged = updateType === "uncertain" || proposedCurrentView.trim() === update.baseCurrentView;
   const impactLabel = updateType === "uncertain" ? "为什么暂时不改变" : updateType === "reinforce" ? "为什么更确定" : "判断变化";
+  const aiDraftEdited = aiDraft !== null && (
+    updateType !== aiDraft.updateType
+    || newInformation !== aiDraft.newInformation
+    || impact !== aiDraft.impact
+    || proposedCurrentView !== aiDraft.proposedCurrentView
+  );
+
+  async function draftWithAi() {
+    if (aiDraft && aiDraftEdited && !window.confirm("重新起草会替换当前填写内容。")) return;
+    setAiPending(true);
+    setError(null);
+    try {
+      const candidate = await generateCognitionAiDraft(update);
+      setAiDraft(candidate);
+      setUpdateType(candidate.updateType);
+      setNewInformation(candidate.newInformation);
+      setImpact(candidate.impact);
+      setProposedCurrentView(candidate.proposedCurrentView);
+      setEditReinforcedView(candidate.updateType === "reinforce" && candidate.proposedCurrentView !== update.baseCurrentView);
+      setNotice(null);
+    } catch (draftError) {
+      if (draftError instanceof ApiError && draftError.code === "COGNITION_TOPIC_VERSION_CONFLICT") setTopicConflict(true);
+      setError(readableError(draftError));
+    } finally {
+      setAiPending(false);
+    }
+  }
 
   function changes() {
     return {
@@ -105,6 +145,7 @@ export function CognitionUpdateEditor({
       setUpdate(saved);
       const refreshed = await reloadCognitionUpdate(saved);
       setUpdate(refreshed);
+      setAiDraft(null);
       setProposedCurrentView(refreshed.proposedCurrentView);
       setEditReinforcedView(false);
       setTopicConflict(false);
@@ -150,6 +191,14 @@ export function CognitionUpdateEditor({
           <span>当前观点</span>
           <p>{update.baseCurrentView || "目前还没有写下明确观点。"}</p>
         </div>
+
+        <div className="cognition-ai-draft-row">
+          <button type="button" disabled={aiPending || pending || topicConflict} onClick={() => void draftWithAi()}>
+            {aiPending ? "正在起草…" : aiDraft ? "重新起草" : "AI 起草"}
+          </button>
+          {aiDraft && <span>AI 草稿</span>}
+        </div>
+        {(!sourceTextComplete || (aiDraft && !aiDraft.sourceTextComplete)) && <p className="cognition-ai-note">这条资料的文字可能不完整，AI 草稿可能遗漏信息。</p>}
 
         <fieldset className="cognition-update-types">
           <legend>影响</legend>

@@ -47,6 +47,7 @@ export function ResearchRecordSection({
   const [pending, setPending] = useState(false);
   const [readerRecord, setReaderRecord] = useState<ResearchRecord | null>(null);
   const [cognitionUpdate, setCognitionUpdate] = useState<CognitionUpdate | null>(null);
+  const [cognitionSourceTextComplete, setCognitionSourceTextComplete] = useState(true);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -102,12 +103,13 @@ export function ResearchRecordSection({
     }
   }
 
-  async function startCognitionUpdate(record: ResearchRecord, sourceContentVersionId: string | null) {
+  async function startCognitionUpdate(record: ResearchRecord, sourceContentVersionId: string | null, sourceTextComplete: boolean) {
     setPending(true);
     setError(null);
     try {
       const result = await createCognitionUpdate(topicId, record.id, sourceContentVersionId);
       setReaderRecord(null);
+      setCognitionSourceTextComplete(sourceTextComplete);
       setCognitionUpdate(result.update);
     } catch (createError) {
       setError(createError instanceof ApiError && createError.code === "RESEARCH_RECORD_UNCLASSIFIED"
@@ -186,14 +188,15 @@ export function ResearchRecordSection({
       {readerRecord && <ResearchRecordReader
         record={readerRecord}
         onClose={() => setReaderRecord(null)}
-        actions={({ sourceContentVersionId }) => (
-          <button className="button primary" type="button" disabled={pending} onClick={() => void startCognitionUpdate(readerRecord, sourceContentVersionId)}>
+        actions={({ sourceContentVersionId, sourceTextComplete }) => (
+          <button className="button primary" type="button" disabled={pending} onClick={() => void startCognitionUpdate(readerRecord, sourceContentVersionId, sourceTextComplete)}>
             更新认知
           </button>
         )}
       />}
       {cognitionUpdate && <CognitionUpdateEditor
         initialUpdate={cognitionUpdate}
+        sourceTextComplete={cognitionSourceTextComplete}
         onClose={() => setCognitionUpdate(null)}
         onApplied={onTopicChange}
         onChanged={onCognitionChanged}

@@ -34,6 +34,7 @@ import { createJiraIntegration } from "./jira-integration.mjs";
 import { ProjectSummaryService } from "./project-summary.mjs";
 import { ResearchImportService } from "./research-import-service.mjs";
 import { isChromeExtensionOrigin, ResearchCaptureService } from "./research-capture-service.mjs";
+import { createResearchAiProvider, ResearchAiDraftService, resolveResearchAiConfig } from "./research-ai-draft-service.mjs";
 import { handleResearchRequest } from "./research-routes.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -1663,6 +1664,14 @@ export function createTaskboardServer(options = {}) {
   const database = new TaskboardDatabase(resolved.databasePath);
   const researchImports = new ResearchImportService(database.research);
   const researchCaptures = new ResearchCaptureService(database.research);
+  const researchAiConfig = resolveResearchAiConfig(options.processEnv ?? process.env);
+  const researchAiDrafts = options.researchAiDraftService ?? new ResearchAiDraftService(database.research, {
+    provider: options.researchAiProvider ?? createResearchAiProvider({
+      environment: options.processEnv ?? process.env,
+      fetchImpl: options.researchAiFetch ?? globalThis.fetch,
+    }),
+    maxSourceChars: researchAiConfig.maxSourceChars,
+  });
   const events = new EventHub();
   let clientStorageWrite = Promise.resolve();
 
@@ -2502,6 +2511,7 @@ export function createTaskboardServer(options = {}) {
         research: database.research,
         researchImports,
         researchCaptures,
+        researchAiDrafts,
         readJson,
         sendJson,
         sendEmpty,

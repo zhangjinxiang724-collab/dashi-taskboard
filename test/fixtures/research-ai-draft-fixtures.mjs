@@ -1,0 +1,118 @@
+export const AI_DRAFT_FIXTURES = {
+  ADD: {
+    suggested_update_type: "ADD",
+    new_information: "新增了一个需要纳入判断的事实。",
+    impact: "原判断需要加入这个新变量。",
+    proposed_current_view: "原观点保留，同时纳入新变量。",
+  },
+  REINFORCE: {
+    suggested_update_type: "REINFORCE",
+    new_information: "资料为原判断补充了新的证据。",
+    impact: "原判断得到进一步支持。",
+    proposed_current_view: "原观点",
+  },
+  REVISE: {
+    suggested_update_type: "REVISE",
+    new_information: "资料显示原判断的一项前提已经变化。",
+    impact: "原判断需要收窄适用范围。",
+    proposed_current_view: "修正后的观点。",
+  },
+  UNCERTAIN: {
+    suggested_update_type: "UNCERTAIN",
+    new_information: "资料提出了一个值得继续验证的信号。",
+    impact: "现有证据还不足以改变判断。",
+    proposed_current_view: "原观点",
+  },
+};
+
+export const AI_QUALITY_CASES = [
+  {
+    id: "add-overseas-channel",
+    expected: "ADD",
+    currentView: "公司增长主要由核心订阅业务驱动，客户留存稳定，但暂不把海外市场计入主要增长来源。",
+    source: "海外试点用户数量连续两个季度增长，海外收入占比仍小，但已经形成可重复的合作伙伴获客模式。资料没有提供总市场规模、盈利预测或长期趋势证据。",
+    forbidden: ["稳定增长", "持续增长", "可规模化", "规模化复制", "长期成立"],
+  },
+  {
+    id: "add-service-revenue",
+    expected: "ADD",
+    currentView: "公司的利润率主要受产品定价和原材料成本影响。",
+    source: "本季度售后服务收入占比提高到十二个百分点，并带来一项新的经常性收入来源；资料没有说明这一比例能否长期维持。",
+    forbidden: ["长期", "稳定", "已经证明"],
+  },
+  {
+    id: "add-delivery-observation",
+    expected: "ADD",
+    currentView: "当前交付压力主要来自产能限制，新增产线投产前仍需谨慎看待收入兑现速度。",
+    source: "最近一个季度的物流调整使部分区域交付周期缩短，但样本只覆盖两个区域，也没有改变新增产线尚未投产的事实。",
+    forbidden: ["全面改善", "长期改善", "稳定改善"],
+  },
+  {
+    id: "add-small-consecutive-growth",
+    expected: "ADD",
+    currentView: "国内需求仍是公司近期订单的主要来源。",
+    source: "三个连续月份观察到小规模海外试点订单增加，但客户数量有限，尚不能判断趋势能否持续。",
+    forbidden: ["稳定增长", "持续增长", "规模化", "长期"],
+  },
+  {
+    id: "reinforce-switching-cost",
+    expected: "REINFORCE",
+    currentView: "公司的竞争优势来自售后服务网络和较高的客户转换成本，短期订单波动不改变长期判断。",
+    source: "多位客户表示更换供应商需要重新认证和培训，通常耗时数月；本季度订单下降主要源于推迟验收，没有发现大规模流失证据。",
+    unchangedAllowed: true,
+  },
+  {
+    id: "reinforce-weak-support",
+    expected: "REINFORCE",
+    currentView: "较长的客户验证周期可能形成一定转换成本，但证据仍有限。",
+    source: "两名受访客户都提到更换方案需要重新完成内部验证，资料只提供了有限支持，没有覆盖其他客户。",
+    unchangedAllowed: true,
+  },
+  {
+    id: "reinforce-seasonality",
+    expected: "REINFORCE",
+    currentView: "现金回款具有明显季节性，单个季度的下降不代表长期恶化。",
+    source: "过去三个年度都出现年中回款较低、年末回升的相似节奏，本季度下降仍处于这一历史区间。",
+    unchangedAllowed: true,
+  },
+  {
+    id: "revise-online-margin",
+    expected: "REVISE",
+    currentView: "线上渠道增长足以抵消门店客流下滑，因此利润率可以保持稳定。",
+    source: "线上收入继续增长，但履约与退货成本显著上升，线上业务贡献利润下降；门店客流仍在下滑。资料只否定线上增长足以稳定利润率这一前提。",
+  },
+  {
+    id: "revise-customer-concentration",
+    expected: "REVISE",
+    currentView: "客户集中度正在下降，因此单一大客户变化对收入的影响正在减弱。",
+    source: "经审计数据表明，最大客户收入占比从上一年的百分之三十上升到百分之四十五，客户集中度并未下降。",
+  },
+  {
+    id: "revise-factory-cost",
+    expected: "REVISE",
+    currentView: "新工厂投产后已经降低单位成本，产能扩张正在改善利润率。",
+    source: "新工厂投产后的两个季度利用率低于计划，单位成本反而高于旧工厂；资料没有否定未来利用率提高的可能。",
+  },
+  {
+    id: "uncertain-single-interview",
+    expected: "UNCERTAIN",
+    currentView: "新工艺可能降低单位成本，但尚未验证能否稳定量产。",
+    source: "一份未交叉验证的单次访谈称试验线成本下降，但没有样本规模、连续运行时间、良率或正式产量数据。",
+    mustRemainUnchanged: true,
+  },
+  {
+    id: "uncertain-strong-language-weak-evidence",
+    expected: "UNCERTAIN",
+    currentView: "新产品是否形成明显技术优势仍需等待第三方测试。",
+    source: "公司宣传材料称产品具有革命性优势，但没有给出测试方法、对照样本或第三方验证结果。",
+    mustRemainUnchanged: true,
+    forbidden: ["革命性优势已经成立", "已经证明"],
+  },
+  {
+    id: "uncertain-small-pilot",
+    expected: "UNCERTAIN",
+    currentView: "自动化方案可能缩短处理时间，但目前不能判断是否适合大范围部署。",
+    source: "一个五人小组进行了两天试用并报告处理速度更快，但缺少试用前基线、错误率和更长周期数据。",
+    mustRemainUnchanged: true,
+  },
+];

@@ -30,6 +30,7 @@ const TOPIC_COGNITION_UPDATES_PATH = /^\/api\/research\/topics\/([^/]+)\/cogniti
 const COGNITION_UPDATE_PATH = /^\/api\/research\/cognition-updates\/([^/]+)$/;
 const COGNITION_UPDATE_APPLY_PATH = /^\/api\/research\/cognition-updates\/([^/]+)\/apply$/;
 const COGNITION_UPDATE_REJECT_PATH = /^\/api\/research\/cognition-updates\/([^/]+)\/reject$/;
+const COGNITION_UPDATE_AI_DRAFT_PATH = /^\/api\/research\/cognition-updates\/([^/]+)\/ai-draft$/;
 
 function assertPlainObject(value, ApiError) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -387,6 +388,7 @@ export async function handleResearchRequest({
   research,
   researchImports,
   researchCaptures,
+  researchAiDrafts,
   readJson,
   sendJson,
   sendEmpty,
@@ -864,6 +866,31 @@ export async function handleResearchRequest({
     if (result.kind === "topic_not_found") throw new ApiError(404, "TOPIC_NOT_FOUND", "Topic not found");
     const update = cognitionUpdateResult(result, ApiError);
     sendJson(response, 200, { update });
+    return true;
+  }
+
+  const cognitionAiDraftMatch = pathname.match(COGNITION_UPDATE_AI_DRAFT_PATH);
+  if (cognitionAiDraftMatch) {
+    if (request.method !== "POST") {
+      methodNotAllowed(response, ["POST"]);
+      return true;
+    }
+    if ([...url.searchParams.keys()].length > 0) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "AI draft does not accept query parameters");
+    const version = parseVersionOnly(await readJson(request), ApiError);
+    const result = await researchAiDrafts.generate(decodeURIComponent(cognitionAiDraftMatch[1]), version);
+    if (result.kind === "not_found") throw new ApiError(404, "COGNITION_UPDATE_NOT_FOUND", "Cognition update not found");
+    if (result.kind === "conflict") throw new ApiError(409, "COGNITION_UPDATE_VERSION_CONFLICT", "Cognition update was changed by another request", { currentVersion: result.currentVersion });
+    if (result.kind === "not_draft") throw new ApiError(409, "COGNITION_UPDATE_NOT_DRAFT", "Only draft cognition updates can use AI drafting", { status: result.status });
+    if (result.kind === "topic_not_found") throw new ApiError(404, "TOPIC_NOT_FOUND", "Topic not found");
+    if (result.kind === "topic_conflict") throw new ApiError(409, "COGNITION_TOPIC_VERSION_CONFLICT", "Current view changed while this update was being edited", { currentVersion: result.currentVersion });
+    if (result.kind === "source_unavailable") throw new ApiError(409, "COGNITION_SOURCE_UNAVAILABLE", "The source research record is no longer available");
+    if (result.kind === "record_topic_mismatch") throw new ApiError(409, "RESEARCH_RECORD_TOPIC_MISMATCH", "Research record no longer belongs to this topic");
+    if (result.kind === "source_version_invalid") throw new ApiError(409, "SOURCE_CONTENT_VERSION_INVALID", "The locked source content version is unavailable");
+    if (result.kind === "source_too_long") throw new ApiError(413, "RESEARCH_AI_SOURCE_TOO_LONG", "The source content is too long for a complete AI draft");
+    if (result.kind === "not_configured") throw new ApiError(503, "RESEARCH_AI_NOT_CONFIGURED", "Research AI is not configured");
+    if (result.kind === "timeout") throw new ApiError(504, "RESEARCH_AI_TIMEOUT", "Research AI request timed out");
+    if (result.kind === "provider_error" || result.kind === "invalid_output") throw new ApiError(502, "RESEARCH_AI_DRAFT_FAILED", "Research AI could not produce a valid draft");
+    sendJson(response, 200, { candidate: result.candidate, sourceTextComplete: result.sourceTextComplete });
     return true;
   }
 

@@ -36,7 +36,7 @@ export function ResearchRecordReader({
   record: ResearchRecord;
   onClose: () => void;
   backLabel?: string;
-  actions?: ReactNode | ((context: { sourceContentVersionId: string | null }) => ReactNode);
+  actions?: ReactNode | ((context: { sourceContentVersionId: string | null; sourceTextComplete: boolean }) => ReactNode);
 }) {
   const { text } = useTaskboardI18n();
   const [content, setContent] = useState<ResearchRecordContent | null>(null);
@@ -112,7 +112,11 @@ export function ResearchRecordReader({
           {record.url && <a href={record.url} target="_blank" rel="noopener noreferrer">{text("打开原始内容 ↗", "Open original ↗")}</a>}
         </div>
         {actions && (record.captureAdapter === "manual-v1" || content) && <div className="research-reader-actions">{typeof actions === "function"
-          ? actions({ sourceContentVersionId: content?.versionId ?? null })
+          ? actions({
+            sourceContentVersionId: content?.versionId ?? null,
+            sourceTextComplete: content?.completenessDetails?.textTranscriptComplete
+              ?? content?.completeness === "complete",
+          })
           : actions}</div>}
         {error && <div className="research-error" role="alert">{error}</div>}
         {loading ? <p className="research-empty-copy">{text("正在读取正文…", "Loading content…")}</p> : null}

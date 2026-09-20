@@ -183,6 +183,32 @@
   white-space: pre-wrap;
 }
 
+.cognition-ai-draft-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cognition-ai-draft-row button {
+  padding: 7px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cognition-ai-draft-row button:disabled { cursor: default; opacity: .55; }
+.cognition-ai-draft-row span,
+.cognition-ai-note {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.cognition-ai-note { margin-top: -12px !important; }
+
 .cognition-update-types {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

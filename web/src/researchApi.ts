@@ -18,6 +18,7 @@ import type {
   ResearchInboxPage,
   CognitionUpdate,
   CognitionUpdateType,
+  CognitionAiDraft,
 } from "./researchTypes";
 
 export async function listTopics(signal?: AbortSignal): Promise<Topic[]> {
@@ -350,6 +351,14 @@ export async function reloadCognitionUpdate(update: CognitionUpdate): Promise<Co
     { method: "POST", body: JSON.stringify({ version: update.version }) },
   );
   return data.update;
+}
+
+export async function generateCognitionAiDraft(update: CognitionUpdate): Promise<CognitionAiDraft> {
+  const data = await request<{ candidate: Omit<CognitionAiDraft, "sourceTextComplete">; sourceTextComplete: boolean }>(
+    `/api/research/cognition-updates/${encodeURIComponent(update.id)}/ai-draft`,
+    { method: "POST", body: JSON.stringify({ version: update.version }) },
+  );
+  return { ...data.candidate, sourceTextComplete: data.sourceTextComplete };
 }
 
 export async function applyCognitionUpdate(update: CognitionUpdate): Promise<{ update: CognitionUpdate; topic: TopicDetail }> {
