@@ -8,8 +8,8 @@ import { gzipSync } from "node:zlib";
 import { afterEach, test } from "node:test";
 
 import { createTaskboardServer } from "../server/index.mjs";
-import { createResearchAiProvider, resolveResearchAiConfig } from "../server/research-ai-draft-service.mjs";
-import { AI_DRAFT_FIXTURES } from "./fixtures/research-ai-draft-fixtures.mjs";
+import { candidateFromRaw, createResearchAiProvider, hasEpistemicPolarityViolation, missingClaimScopes, resolveResearchAiConfig, splitBaseClaims, SYSTEM_INSTRUCTIONS } from "../server/research-ai-draft-service.mjs";
+import { AI_DELTA_FIXTURES, AI_DRAFT_FIXTURES, AI_LANGUAGE_STYLE_CASES, AI_LANGUAGE_STYLE_FIXTURE, AI_SCOPE_PRESERVATION_CASES, AI_TYPE_PRECEDENCE_CASES } from "./fixtures/research-ai-draft-fixtures.mjs";
 
 const fixtures = [];
 
@@ -31,14 +31,16 @@ async function request(baseUrl, pathname, options = {}) {
   return { response, body: text ? JSON.parse(text) : undefined };
 }
 
-async function setup({ outputs = [AI_DRAFT_FIXTURES.ADD], providerError = null, textComplete = true, maxSourceChars = "120000", configured = true } = {}) {
+async function setup({ outputs = [AI_DRAFT_FIXTURES.ADD], providerError = null, textComplete = true, maxSourceChars = "120000", configured = true, currentView = "原观点", sourceMessages = [{ role: "user", text: "虚构资料正文。" }, { role: "assistant", text: "只用于测试认知变化。" }] } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "research-phase382-test-"));
   let calls = 0;
+  const providerOptions = [];
   const provider = {
     name: "mock",
     model: "mock-cognition",
-    async generate() {
+    async generate(_input, options) {
       calls += 1;
+      providerOptions.push(options);
       if (providerError) throw providerError;
       return outputs[Math.min(calls - 1, outputs.length - 1)];
     },
@@ -51,14 +53,14 @@ async function setup({ outputs = [AI_DRAFT_FIXTURES.ADD], providerError = null, 
   const address = await app.listen({ host: "127.0.0.1", port: 0 });
   fixtures.push({ app, directory });
   const baseUrl = `http://127.0.0.1:${address.port}`;
-  const topic = (await request(baseUrl, "/api/research/topics", { method: "POST", body: { title: "虚构行业研究", status: "active", currentView: "原观点" } })).body.topic;
+  const topic = (await request(baseUrl, "/api/research/topics", { method: "POST", body: { title: "虚构行业研究", status: "active", currentView } })).body.topic;
   const record = (await request(baseUrl, `/api/research/topics/${topic.id}/records`, {
     method: "POST",
     body: { title: "脱敏资料", provider: "chatgpt", kind: "chat", url: null, externalId: null, summary: "脱敏摘要", note: "", occurredAt: "2026-09-14T00:00:00.000Z" },
   })).body.record;
   const database = new DatabaseSync(path.join(directory, "taskboard.sqlite"));
   const versionId = randomUUID();
-  const payload = Buffer.from(JSON.stringify({ messages: [{ role: "user", text: "虚构资料正文。" }, { role: "assistant", text: "只用于测试认知变化。" }] }), "utf8");
+  const payload = Buffer.from(JSON.stringify({ messages: sourceMessages }), "utf8");
   const hash = `sha256:${createHash("sha256").update(payload).digest("hex")}`;
   database.prepare(`
     INSERT INTO research_record_content_versions (
@@ -70,7 +72,7 @@ async function setup({ outputs = [AI_DRAFT_FIXTURES.ADD], providerError = null, 
   `).run(versionId, record.id, textComplete ? "complete" : "partial", JSON.stringify({ textTranscriptComplete: textComplete }), gzipSync(payload), hash, `fixture-${record.id}`, new Date().toISOString(), new Date().toISOString());
   database.prepare("UPDATE research_records SET capture_adapter = 'chatgpt-browser-v1', capture_completeness = ? WHERE id = ?").run(textComplete ? "complete" : "partial", record.id);
   const draft = (await request(baseUrl, `/api/research/topics/${topic.id}/cognition-updates`, { method: "POST", body: { recordId: record.id, sourceContentVersionId: versionId } })).body.update;
-  return { baseUrl, directory, database, topic, record, draft, versionId, calls: () => calls };
+  return { baseUrl, directory, database, topic, record, draft, versionId, calls: () => calls, providerOptions };
 }
 
 test("provider selection keeps OpenAI and adds local Ollama with a safe default model", async () => {
@@ -105,7 +107,7 @@ test("provider selection keeps OpenAI and adds local Ollama with a safe default 
   assert.equal(ollamaRequest.body.keep_alive, "5m");
   assert.equal(ollamaRequest.body.options.temperature, 0);
   assert.equal(ollamaRequest.body.options.num_predict, 320);
-  assert.deepEqual(ollamaRequest.body.format.required, ["suggested_update_type", "new_information", "impact", "proposed_current_view"]);
+  assert.deepEqual(ollamaRequest.body.format.required, ["suggested_update_type", "new_information", "impact", "claim_changes"]);
   assert.deepEqual(ollamaResult.usage, { inputTokens: 120, outputTokens: 40, totalTokens: 160 });
 
   let openAiRequest;
@@ -135,6 +137,169 @@ test("ADD, REINFORCE, REVISE and UNCERTAIN fixtures produce editable candidates 
     assert.deepEqual(context.database.prepare("SELECT * FROM cognition_updates WHERE id = ?").get(context.draft.id), before);
     context.database.close();
   }
+});
+
+test("ten Delta fixtures preserve unaffected claims and reject invalid changes", () => {
+  assert.equal(AI_DELTA_FIXTURES.length, 10);
+  for (const fixture of AI_DELTA_FIXTURES) {
+    const raw = {
+      suggested_update_type: fixture.type,
+      new_information: "脱敏新信息。",
+      impact: "我原来的判断需要按证据调整。",
+      claim_changes: fixture.changes,
+    };
+    const candidate = candidateFromRaw(raw, fixture.base, fixture.source ?? "脱敏资料支持这项变化。");
+    if (fixture.invalid) assert.equal(candidate, null, fixture.id);
+    else assert.equal(candidate.proposedCurrentView, fixture.expected, fixture.id);
+  }
+});
+
+test("Cognition Draft prompt and macro fixture use plain personal Chinese without weakening evidence limits", () => {
+  assert.match(SYSTEM_INSTRUCTIONS, /认知内容不是研究报告，是写给未来的自己看的/);
+  assert.match(SYSTEM_INSTRUCTIONS, /我原来/);
+  assert.match(SYSTEM_INSTRUCTIONS, /现在看/);
+  assert.match(SYSTEM_INSTRUCTIONS, /数据是证据，不是正文主体/);
+  assert.match(SYSTEM_INSTRUCTIONS, /不要为了讲人话而删除重要条件/);
+
+  const { oldOutput, newOutput, source } = AI_LANGUAGE_STYLE_FIXTURE;
+  assert.match(oldOutput.new_information, /结构性矛盾/);
+  assert.doesNotMatch(`${newOutput.new_information}\n${newOutput.impact}\n${newOutput.proposed_current_view}`, /结构性矛盾|传导机制|需求端修复|供给侧压力|估值逻辑/);
+  assert.match(newOutput.impact, /我原来/);
+  assert.match(newOutput.impact, /现在看/);
+  assert.match(newOutput.new_information, /还需要观察/);
+  assert.match(newOutput.proposed_current_view, /还要一起看/);
+  assert.match(source, /消费价格/);
+  assert.match(newOutput.new_information, /消费价格/);
+});
+
+test("six domain language fixtures read as personal cognition notes instead of reports", () => {
+  assert.deepEqual(AI_LANGUAGE_STYLE_CASES.map((item) => item.category), [
+    "宏观经济", "公司研究", "历史研究", "技术 / AI", "医疗或健康", "普通生活",
+  ]);
+  const reportTone = /结构性矛盾|传导机制|需求端修复|供给侧压力|估值逻辑|长期共存格局|核心驱动|恶性循环|边际改善|预期修复/;
+  for (const fixture of AI_LANGUAGE_STYLE_CASES) {
+    const { newOutput } = fixture;
+    const combined = `${newOutput.new_information}\n${newOutput.impact}\n${newOutput.proposed_current_view}`;
+    assert.doesNotMatch(combined, reportTone, fixture.id);
+    assert.match(newOutput.impact, /我原来/, fixture.id);
+    assert.match(newOutput.impact, /现在看/, fixture.id);
+    assert.ok(newOutput.new_information.length < 180, fixture.id);
+    assert.ok(newOutput.impact.length < 180, fixture.id);
+    assert.ok(newOutput.proposed_current_view.length < 220, fixture.id);
+    assert.ok(!newOutput.new_information.includes("资料显示"), fixture.id);
+  }
+  for (const fixture of AI_LANGUAGE_STYLE_CASES.filter((item) => item.newOutput.suggested_update_type === "UNCERTAIN")) {
+    assert.equal(fixture.newOutput.proposed_current_view, fixture.currentView, fixture.id);
+  }
+});
+
+test("type precedence fixtures cover REVISE before ADD and preserve all four boundaries", () => {
+  assert.equal(AI_TYPE_PRECEDENCE_CASES.length, 6);
+  assert.deepEqual(AI_TYPE_PRECEDENCE_CASES.map((item) => item.expected), [
+    "REVISE", "ADD", "REINFORCE", "ADD", "REVISE", "UNCERTAIN",
+  ]);
+  assert.match(SYSTEM_INSTRUCTIONS, /一句话必须被改写、加限定或降低确定性/);
+  assert.match(SYSTEM_INSTRUCTIONS, /主类型仍是 REVISE/);
+  assert.match(SYSTEM_INSTRUCTIONS, /不要求修改任何已有判断/);
+});
+
+test("unknown evidence cannot become a negative fact and gets one structured repair", async () => {
+  const sourceText = "资料没有说明居民收入是否已经恢复。";
+  assert.equal(hasEpistemicPolarityViolation("居民收入还没有恢复。", "原观点", sourceText), true);
+  assert.equal(hasEpistemicPolarityViolation("居民收入是否恢复还不确定。", "原观点", sourceText), false);
+  assert.equal(hasEpistemicPolarityViolation("我原来认为居民收入还没有恢复。现在资料仍不足以判断。", "居民收入还没有恢复。", sourceText), false);
+
+  const invalid = {
+    suggested_update_type: "ADD",
+    new_information: "居民收入还没有恢复。",
+    impact: "我原来只看价格。现在看居民收入没跟上。",
+    claim_changes: [{ action: "MODIFY", claim_id: "C1", replacement: "以后还要看居民收入，目前收入没有改善", text: null }],
+  };
+  const repaired = {
+    suggested_update_type: "REVISE",
+    new_information: "价格已经出现变化，但资料没有说明居民收入是否已经恢复。",
+    impact: "我原来只看价格。现在看，这个判断需要加入限制，因为收入是否同步恢复还不确定。",
+    claim_changes: [{ action: "MODIFY", claim_id: "C1", replacement: "以后不能只看价格，还要一起看居民收入。目前资料还不足以判断收入是否同步恢复", text: null }],
+  };
+  const context = await setup({
+    currentView: "我原来只看价格判断是否恢复。",
+    sourceMessages: [{ role: "assistant", text: sourceText }],
+    outputs: [invalid, repaired],
+  });
+  const result = await request(context.baseUrl, `/api/research/cognition-updates/${context.draft.id}/ai-draft`, { method: "POST", body: { version: context.draft.version } });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.candidate.updateType, "revise");
+  assert.equal(result.body.candidate.newInformation, repaired.new_information);
+  assert.equal(context.calls(), 2);
+  context.database.close();
+});
+
+test("ADD preserves the existing view, quotes a real old claim and does not strengthen evidence", async () => {
+  const currentView = "原观点认为核心优势来自产品能力。仍需关注估值风险。";
+  const invalid = {
+    suggested_update_type: "ADD",
+    new_information: "竞争压力高企。",
+    impact: "我原来认为竞争对手正在蚕食市场。现在需要重新判断。",
+    claim_changes: [{ action: "MODIFY", claim_id: "C1", replacement: "以后只看竞争对手的增长", text: null }],
+  };
+  const repaired = {
+    suggested_update_type: "ADD",
+    new_information: "竞争对手增长较快，但资料没有说明原公司的业务已经受损。",
+    impact: "我原来认为核心优势来自产品能力。这个判断不需要修改，但以后还要加入竞争对手变化这个维度。",
+    claim_changes: [{ action: "ADD", claim_id: null, replacement: null, text: "以后还要观察竞争对手增长是否真的影响原公司的收入和客户采购" }],
+  };
+  const context = await setup({
+    currentView,
+    sourceMessages: [{ role: "assistant", text: "竞争对手增长高于过去，但资料没有说明原公司的收入或客户采购已经下降。" }],
+    outputs: [invalid, repaired],
+  });
+  const result = await request(context.baseUrl, `/api/research/cognition-updates/${context.draft.id}/ai-draft`, { method: "POST", body: { version: context.draft.version } });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.candidate.updateType, "add");
+  assert.equal(result.body.candidate.impact, repaired.impact);
+  assert.equal(result.body.candidate.proposedCurrentView, `${currentView}以后还要观察竞争对手增长是否真的影响原公司的收入和客户采购。`);
+  assert.equal(context.calls(), 2);
+  context.database.close();
+});
+
+test("six combined Current View fixtures preserve claims outside the changed scope", () => {
+  assert.equal(AI_SCOPE_PRESERVATION_CASES.length, 6);
+  for (const fixture of AI_SCOPE_PRESERVATION_CASES) {
+    assert.ok(splitBaseClaims(fixture.base).length >= 2, fixture.id);
+    assert.deepEqual(missingClaimScopes(fixture.base, fixture.proposed), [], fixture.id);
+  }
+  assert.ok(missingClaimScopes(
+    "美国的物价压力仍需观察。中国仍处于全面通缩。",
+    "中国价格开始回升，但需求是否同步恢复还不确定。",
+  ).some((claim) => claim.includes("美国")));
+});
+
+test("a dropped unaffected claim gets one repair and never reaches the user incomplete", async () => {
+  const currentView = "市场需求保持稳定。供应成本仍然偏高。";
+  const incomplete = {
+    suggested_update_type: "REVISE",
+    new_information: "新的合同使供应成本下降。",
+    impact: "我原来认为供应成本偏高。现在需要修正这一部分。",
+    claim_changes: [{ action: "MODIFY", claim_id: "C2", replacement: "供应成本已经下降", text: null }],
+  };
+  const repaired = {
+    suggested_update_type: "REVISE",
+    new_information: "新的合同使供应成本下降。",
+    impact: "我原来认为供应成本偏高。现在需要修正这一部分，市场需求判断不受影响。",
+    claim_changes: [{ action: "MODIFY", claim_id: "C2", replacement: "供应成本已经下降", text: null }],
+  };
+  const context = await setup({
+    currentView,
+    sourceMessages: [{ role: "assistant", text: "新合同已经执行，供应成本下降；资料没有讨论市场需求。" }],
+    outputs: [incomplete, repaired],
+  });
+  const before = context.database.prepare("SELECT * FROM cognition_updates WHERE id = ?").get(context.draft.id);
+  const result = await request(context.baseUrl, `/api/research/cognition-updates/${context.draft.id}/ai-draft`, { method: "POST", body: { version: context.draft.version } });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.candidate.proposedCurrentView, "市场需求保持稳定。供应成本已经下降。");
+  assert.equal(context.calls(), 1);
+  assert.deepEqual(context.database.prepare("SELECT * FROM cognition_updates WHERE id = ?").get(context.draft.id), before);
+  context.database.close();
 });
 
 test("AI candidate is only persisted by explicit PATCH and only applied by explicit apply", async () => {
