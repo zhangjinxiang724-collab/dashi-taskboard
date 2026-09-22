@@ -11,18 +11,21 @@ const api = vi.hoisted(() => ({
   assignResearchRecordsToTopic: vi.fn(),
   confirmBrowserCapturePreview: vi.fn(),
   createChatGptImportPreview: vi.fn(),
+  createResearchRecordSummary: vi.fn(),
   createTopicAndAssignResearchRecords: vi.fn(),
   deleteResearchRecord: vi.fn(),
   getBrowserCapturePreview: vi.fn(),
   getImportPreview: vi.fn(),
   getResearchInboxSummary: vi.fn(),
   getResearchRecordContent: vi.fn(),
+  getResearchRecordSummary: vi.fn(),
   getSelectableImportPreviewKeys: vi.fn(),
   listResearchImportSessions: vi.fn(),
   listResearchInbox: vi.fn(),
   listResearchRecordContentVersions: vi.fn(),
   listTopics: vi.fn(),
   undoResearchImportSession: vi.fn(),
+  updateResearchRecordSummary: vi.fn(),
   confirmResearchImport: vi.fn(),
 }));
 
@@ -123,6 +126,7 @@ describe("Research Inbox entry paths", () => {
     api.getResearchInboxSummary.mockResolvedValue(1);
     api.listResearchInbox.mockResolvedValue({ total: 1, page: 1, pageSize: 50, records: [record] });
     api.getResearchRecordContent.mockResolvedValue(content);
+    api.getResearchRecordSummary.mockResolvedValue(null);
     api.listResearchRecordContentVersions.mockResolvedValue([]);
     api.assignResearchRecordsToTopic.mockResolvedValue(1);
   });

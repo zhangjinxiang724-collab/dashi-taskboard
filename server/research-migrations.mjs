@@ -291,6 +291,30 @@ const RESEARCH_MIGRATIONS = [
       `);
     },
   },
+  {
+    version: "007_research_record_summaries",
+    up(database) {
+      database.exec(`
+        CREATE TABLE research_record_summaries (
+          id TEXT PRIMARY KEY,
+          record_id TEXT NOT NULL REFERENCES research_records(id) ON DELETE CASCADE,
+          source_content_version_id TEXT NOT NULL
+            REFERENCES research_record_content_versions(id) ON DELETE CASCADE,
+          one_line_summary TEXT NOT NULL,
+          core_content TEXT NOT NULL DEFAULT '',
+          key_evidence TEXT NOT NULL DEFAULT '',
+          unresolved TEXT NOT NULL DEFAULT '',
+          version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE (record_id, source_content_version_id)
+        );
+
+        CREATE INDEX research_record_summaries_record_updated
+          ON research_record_summaries(record_id, updated_at DESC, id);
+      `);
+    },
+  },
 ];
 
 function appliedVersions(database) {

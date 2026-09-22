@@ -108,6 +108,26 @@ export interface ResearchRecordDraft {
   occurredAt: string;
 }
 
+export interface ResearchRecordSummary {
+  id: string;
+  recordId: string;
+  sourceContentVersionId: string;
+  oneLineSummary: string;
+  coreContent: string;
+  keyEvidence: string;
+  unresolved: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ResearchRecordSummaryDraft {
+  oneLineSummary: string;
+  coreContent: string;
+  keyEvidence: string;
+  unresolved: string;
+}
+
 export interface CognitionUpdate {
   id: string;
   topicId: string;

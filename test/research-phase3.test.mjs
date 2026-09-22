@@ -240,6 +240,7 @@ test("Phase 3 migration backs up and preserves a Phase 2 database", async () => 
       "004_chatgpt_historical_import",
       "005_browser_capture",
       "006_cognition_updates",
+      "007_research_record_summaries",
     ]);
     await access(research.migrationResult.backupPath);
     assert.equal(research.getTopic("phase2-topic").currentView, "当前观点");
@@ -253,6 +254,7 @@ test("Phase 3 migration backs up and preserves a Phase 2 database", async () => 
         "004_chatgpt_historical_import",
         "005_browser_capture",
         "006_cognition_updates",
+        "007_research_record_summaries",
       ],
     );
     assert.ok(database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'research_records'").get());

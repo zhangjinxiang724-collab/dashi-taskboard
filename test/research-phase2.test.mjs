@@ -236,6 +236,7 @@ test("Phase 2 migration backs up and preserves Phase 1 Topic data", async () => 
       "004_chatgpt_historical_import",
       "005_browser_capture",
       "006_cognition_updates",
+      "007_research_record_summaries",
     ]);
     assert.ok(research.migrationResult.backupPath);
     await access(research.migrationResult.backupPath);
@@ -256,6 +257,7 @@ test("Phase 2 migration backs up and preserves Phase 1 Topic data", async () => 
         "004_chatgpt_historical_import",
         "005_browser_capture",
         "006_cognition_updates",
+        "007_research_record_summaries",
       ],
     );
     assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);

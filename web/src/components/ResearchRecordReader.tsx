@@ -8,6 +8,7 @@ import {
 import type { ResearchRecord, ResearchRecordContent, ResearchRecordContentVersion } from "../researchTypes";
 import { ResearchCompletenessPanel } from "./ResearchCompletenessPanel";
 import { researchRecordKindLabel, researchRecordProviderLabel } from "./ResearchRecordEditor";
+import { ResearchSummaryPanel } from "./ResearchSummaryPanel";
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -111,13 +112,6 @@ export function ResearchRecordReader({
           })}</select></label>}
           {record.url && <a href={record.url} target="_blank" rel="noopener noreferrer">{text("打开原始内容 ↗", "Open original ↗")}</a>}
         </div>
-        {actions && (record.captureAdapter === "manual-v1" || content) && <div className="research-reader-actions">{typeof actions === "function"
-          ? actions({
-            sourceContentVersionId: content?.versionId ?? null,
-            sourceTextComplete: content?.completenessDetails?.textTranscriptComplete
-              ?? content?.completeness === "complete",
-          })
-          : actions}</div>}
         {error && <div className="research-error" role="alert">{error}</div>}
         {loading ? <p className="research-empty-copy">{text("正在读取正文…", "Loading content…")}</p> : null}
         {!loading && !content ? <div className="research-reader-manual-copy">
@@ -126,6 +120,17 @@ export function ResearchRecordReader({
           {!record.summary && !record.note && <p>{text("这条记录暂时没有可阅读的正文。", "This record does not have readable content yet.")}</p>}
         </div> : null}
         {resolvedCompleteness ? <div className="research-reader-completeness"><ResearchCompletenessPanel presentation={completeness} /></div> : null}
+        {content?.versionId && <ResearchSummaryPanel
+          recordId={record.id}
+          sourceContentVersionId={content.versionId}
+        />}
+        {actions && (record.captureAdapter === "manual-v1" || content) && <div className="research-reader-actions">{typeof actions === "function"
+          ? actions({
+            sourceContentVersionId: content?.versionId ?? null,
+            sourceTextComplete: content?.completenessDetails?.textTranscriptComplete
+              ?? content?.completeness === "complete",
+          })
+          : actions}</div>}
         {content && <section className="research-content-transcript">
           <h3>对话内容 · {content.messageCount} 条</h3>
           <div className="research-content-messages">

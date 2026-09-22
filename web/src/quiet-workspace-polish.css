@@ -1137,6 +1137,26 @@
 .research-content-meta label { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .research-content-meta select { min-height: 28px; border: 1px solid var(--qw-color-border); border-radius: 5px; background: var(--qw-color-surface); font-size: 11px; }
 .research-reader-completeness { margin: 0 24px; }
+.research-summary { margin: 22px 24px 0; padding: 18px 0 20px; border-top: 1px solid var(--qw-color-border); border-bottom: 1px solid var(--qw-color-border); }
+.research-summary > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.research-summary > header span,
+.research-summary-content span,
+.research-summary-form label > span { color: var(--qw-color-text-faint); font-size: 10px; }
+.research-summary > header h3 { margin: 4px 0 0; font-size: 14px; }
+.research-summary > header button,
+.research-summary-empty button { padding: 0; border: 0; background: transparent; color: var(--qw-color-text-muted); font: inherit; cursor: pointer; }
+.research-summary-muted,
+.research-summary-empty p { margin: 15px 0 0; color: var(--qw-color-text-muted); font-size: 12px; }
+.research-summary-empty { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.research-summary-empty button { margin-top: 15px; color: var(--qw-color-accent); }
+.research-summary-content { display: grid; gap: 18px; padding-top: 18px; }
+.research-summary-content p { margin: 6px 0 0; color: var(--qw-color-text); font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
+.research-summary-form { display: grid; gap: 14px; padding-top: 18px; }
+.research-summary-form label { display: grid; gap: 7px; }
+.research-summary-form textarea { width: 100%; resize: vertical; padding: 9px 10px; border: 1px solid var(--qw-color-border); border-radius: var(--qw-radius-sm); background: var(--qw-color-surface); color: var(--qw-color-text); font: inherit; line-height: 1.55; }
+.research-summary-form textarea:focus { border-color: var(--qw-color-border-strong); outline: none; }
+.research-summary-form footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
+.research-summary-form footer > button:first-child { border: 0; background: transparent; color: var(--qw-color-text-muted); }
 .research-content-transcript > h3 { margin: 20px 24px 2px; color: var(--qw-color-text); font-size: 13px; font-weight: 600; }
 .research-content-messages pre { overflow: auto; padding: 12px; border-radius: 6px; background: var(--qw-color-surface-muted); white-space: pre-wrap; }
 .research-content-placeholder { color: var(--qw-color-text-faint); font-style: italic; }

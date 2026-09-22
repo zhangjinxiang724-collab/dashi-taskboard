@@ -120,6 +120,7 @@ test("Topic and existing Task form the minimal Research OS loop", async () => {
         "004_chatgpt_historical_import",
         "005_browser_capture",
         "006_cognition_updates",
+        "007_research_record_summaries",
       ],
     );
     assert.equal(

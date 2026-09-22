@@ -13,6 +13,8 @@ import type {
   ResearchImportSession,
   ResearchRecordContent,
   ResearchRecordContentVersion,
+  ResearchRecordSummary,
+  ResearchRecordSummaryDraft,
   BrowserCapturePreview,
   ResearchCaptureClient,
   ResearchInboxPage,
@@ -313,6 +315,46 @@ export async function listResearchRecordContentVersions(recordId: string): Promi
     `/api/research/records/${encodeURIComponent(recordId)}/content-versions`,
   );
   return data.versions;
+}
+
+export async function getResearchRecordSummary(
+  recordId: string,
+  sourceContentVersionId: string,
+): Promise<ResearchRecordSummary | null> {
+  const query = new URLSearchParams({ contentVersionId: sourceContentVersionId });
+  const data = await request<{ summary: ResearchRecordSummary | null }>(
+    `/api/research/records/${encodeURIComponent(recordId)}/summary?${query}`,
+  );
+  return data.summary;
+}
+
+export async function createResearchRecordSummary(
+  recordId: string,
+  sourceContentVersionId: string,
+  draft: ResearchRecordSummaryDraft,
+): Promise<ResearchRecordSummary> {
+  const data = await request<{ summary: ResearchRecordSummary }>(
+    `/api/research/records/${encodeURIComponent(recordId)}/summary`,
+    {
+      method: "POST",
+      body: JSON.stringify({ sourceContentVersionId, ...draft }),
+    },
+  );
+  return data.summary;
+}
+
+export async function updateResearchRecordSummary(
+  summary: ResearchRecordSummary,
+  draft: ResearchRecordSummaryDraft,
+): Promise<ResearchRecordSummary> {
+  const data = await request<{ summary: ResearchRecordSummary }>(
+    `/api/research/summaries/${encodeURIComponent(summary.id)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ version: summary.version, ...draft }),
+    },
+  );
+  return data.summary;
 }
 
 export async function createCognitionUpdate(

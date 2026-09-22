@@ -17,6 +17,8 @@ const TOPIC_RECORDS_PATH = /^\/api\/research\/topics\/([^/]+)\/records$/;
 const RESEARCH_RECORD_PATH = /^\/api\/research\/records\/([^/]+)$/;
 const RESEARCH_RECORD_CONTENT_PATH = /^\/api\/research\/records\/([^/]+)\/content$/;
 const RESEARCH_RECORD_CONTENT_VERSIONS_PATH = /^\/api\/research\/records\/([^/]+)\/content-versions$/;
+const RESEARCH_RECORD_SUMMARY_PATH = /^\/api\/research\/records\/([^/]+)\/summary$/;
+const RESEARCH_SUMMARY_PATH = /^\/api\/research\/summaries\/([^/]+)$/;
 const IMPORT_PREVIEW_PATH = /^\/api\/research\/imports\/previews\/([^/]+)$/;
 const IMPORT_PREVIEW_CONFIRM_PATH = /^\/api\/research\/imports\/previews\/([^/]+)\/confirm$/;
 const IMPORT_PREVIEW_SELECTION_PATH = /^\/api\/research\/imports\/previews\/([^/]+)\/selection$/;
@@ -198,6 +200,25 @@ function parseCognitionUpdateCreate(body, ApiError) {
   return {
     recordId: text(body.recordId, "recordId", ApiError, { required: true, maxLength: 1_000 }),
     sourceContentVersionId: nullableText(body.sourceContentVersionId, "sourceContentVersionId", ApiError, { maxLength: 1_000 }),
+  };
+}
+
+function parseResearchSummaryFields(body, ApiError, { creating = false } = {}) {
+  assertPlainObject(body, ApiError);
+  const allowed = creating
+    ? new Set(["sourceContentVersionId", "oneLineSummary", "coreContent", "keyEvidence", "unresolved"])
+    : new Set(["version", "oneLineSummary", "coreContent", "keyEvidence", "unresolved"]);
+  assertAllowedKeys(body, allowed, ApiError);
+  return {
+    ...(creating ? {
+      sourceContentVersionId: text(body.sourceContentVersionId, "sourceContentVersionId", ApiError, { required: true, maxLength: 1_000 }),
+    } : {
+      version: positiveVersion(body.version, ApiError),
+    }),
+    oneLineSummary: text(body.oneLineSummary, "oneLineSummary", ApiError, { required: true, maxLength: 1_000 }),
+    coreContent: text(body.coreContent, "coreContent", ApiError),
+    keyEvidence: text(body.keyEvidence, "keyEvidence", ApiError),
+    unresolved: text(body.unresolved, "unresolved", ApiError),
   };
 }
 
@@ -788,6 +809,60 @@ export async function handleResearchRequest({
       throw new ApiError(409, "RESEARCH_RECORDS_NOT_IN_INBOX", "One or more records are no longer in the inbox", { recordIds: result.recordIds });
     }
     sendJson(response, 200, { updated: result.updated });
+    return true;
+  }
+
+  const recordSummaryMatch = pathname.match(RESEARCH_RECORD_SUMMARY_PATH);
+  if (recordSummaryMatch) {
+    const recordId = decodeURIComponent(recordSummaryMatch[1]);
+    if (request.method === "GET") {
+      for (const key of url.searchParams.keys()) {
+        if (key !== "contentVersionId" || url.searchParams.getAll(key).length !== 1) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Record summary only accepts one contentVersionId parameter");
+        }
+      }
+      const sourceContentVersionId = text(
+        url.searchParams.get("contentVersionId"),
+        "contentVersionId",
+        ApiError,
+        { required: true, maxLength: 1_000 },
+      );
+      const result = research.getResearchRecordSummary(recordId, sourceContentVersionId);
+      if (result.kind === "record_not_found") throw new ApiError(404, "RESEARCH_RECORD_NOT_FOUND", "Research record not found");
+      if (result.kind === "source_version_invalid") throw new ApiError(400, "SOURCE_CONTENT_VERSION_INVALID", "The content version does not belong to this research record");
+      sendJson(response, 200, { summary: result.summary });
+      return true;
+    }
+    if (request.method === "POST") {
+      if ([...url.searchParams.keys()].length > 0) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Record summary creation does not accept query parameters");
+      const result = research.createResearchRecordSummary(
+        recordId,
+        parseResearchSummaryFields(await readJson(request), ApiError, { creating: true }),
+      );
+      if (result.kind === "record_not_found") throw new ApiError(404, "RESEARCH_RECORD_NOT_FOUND", "Research record not found");
+      if (result.kind === "source_version_invalid") throw new ApiError(400, "SOURCE_CONTENT_VERSION_INVALID", "The content version does not belong to this research record");
+      if (result.kind === "already_exists") throw new ApiError(409, "RESEARCH_SUMMARY_ALREADY_EXISTS", "This content version already has a summary", { summary: result.summary });
+      sendJson(response, 201, { summary: result.summary });
+      return true;
+    }
+    methodNotAllowed(response, ["GET", "POST"]);
+    return true;
+  }
+
+  const summaryMatch = pathname.match(RESEARCH_SUMMARY_PATH);
+  if (summaryMatch) {
+    if (request.method !== "PATCH") {
+      methodNotAllowed(response, ["PATCH"]);
+      return true;
+    }
+    if ([...url.searchParams.keys()].length > 0) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Summary update does not accept query parameters");
+    const result = research.updateResearchRecordSummary(
+      decodeURIComponent(summaryMatch[1]),
+      parseResearchSummaryFields(await readJson(request), ApiError),
+    );
+    if (result.kind === "not_found") throw new ApiError(404, "RESEARCH_SUMMARY_NOT_FOUND", "Research summary not found");
+    if (result.kind === "conflict") throw new ApiError(409, "RESEARCH_SUMMARY_VERSION_CONFLICT", "Research summary changed elsewhere", { currentVersion: result.currentVersion });
+    sendJson(response, 200, { summary: result.summary });
     return true;
   }
 

@@ -109,6 +109,22 @@ function cognitionUpdateFromRow(row) {
   };
 }
 
+function researchRecordSummaryFromRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    recordId: row.record_id,
+    sourceContentVersionId: row.source_content_version_id,
+    oneLineSummary: row.one_line_summary,
+    coreContent: row.core_content,
+    keyEvidence: row.key_evidence,
+    unresolved: row.unresolved,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function decodeContentRow(row) {
   if (!row) return null;
   const contentBuffer = gunzipSync(row.content_blob);
@@ -482,6 +498,81 @@ export class ResearchDatabase {
       isCurrent: Boolean(row.is_current),
       createdAt: row.created_at,
     }));
+  }
+
+  getResearchRecordSummary(recordId, sourceContentVersionId) {
+    const record = this.getResearchRecord(recordId);
+    if (!record) return { kind: "record_not_found" };
+    const sourceVersion = this.database.prepare(`
+      SELECT 1 FROM research_record_content_versions
+      WHERE id = ? AND record_id = ?
+    `).get(sourceContentVersionId, recordId);
+    if (!sourceVersion) return { kind: "source_version_invalid" };
+    const summary = researchRecordSummaryFromRow(this.database.prepare(`
+      SELECT * FROM research_record_summaries
+      WHERE record_id = ? AND source_content_version_id = ?
+    `).get(recordId, sourceContentVersionId));
+    return { kind: "found", summary };
+  }
+
+  createResearchRecordSummary(recordId, input) {
+    const source = this.getResearchRecordSummary(recordId, input.sourceContentVersionId);
+    if (source.kind !== "found") return source;
+    if (source.summary) return { kind: "already_exists", summary: source.summary };
+    const timestamp = now();
+    const id = randomUUID();
+    try {
+      this.database.prepare(`
+        INSERT INTO research_record_summaries (
+          id, record_id, source_content_version_id, one_line_summary,
+          core_content, key_evidence, unresolved, version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      `).run(
+        id, recordId, input.sourceContentVersionId, input.oneLineSummary,
+        input.coreContent, input.keyEvidence, input.unresolved, timestamp, timestamp,
+      );
+    } catch (error) {
+      if (error?.code === "SQLITE_CONSTRAINT_UNIQUE") {
+        return {
+          kind: "already_exists",
+          summary: this.getResearchRecordSummary(recordId, input.sourceContentVersionId).summary,
+        };
+      }
+      throw error;
+    }
+    return { kind: "created", summary: researchRecordSummaryFromRow(this.database.prepare(`
+      SELECT * FROM research_record_summaries WHERE id = ?
+    `).get(id)) };
+  }
+
+  updateResearchRecordSummary(id, input) {
+    const current = researchRecordSummaryFromRow(this.database.prepare(`
+      SELECT * FROM research_record_summaries WHERE id = ?
+    `).get(id));
+    if (!current) return { kind: "not_found" };
+    if (current.version !== input.version) {
+      return { kind: "conflict", currentVersion: current.version };
+    }
+    const result = this.database.prepare(`
+      UPDATE research_record_summaries
+      SET one_line_summary = ?, core_content = ?, key_evidence = ?, unresolved = ?,
+          version = version + 1, updated_at = ?
+      WHERE id = ? AND version = ?
+    `).run(
+      input.oneLineSummary, input.coreContent, input.keyEvidence, input.unresolved,
+      now(), id, input.version,
+    );
+    if (result.changes !== 1) {
+      const latest = this.database.prepare(`
+        SELECT version FROM research_record_summaries WHERE id = ?
+      `).get(id);
+      return latest
+        ? { kind: "conflict", currentVersion: latest.version }
+        : { kind: "not_found" };
+    }
+    return { kind: "updated", summary: researchRecordSummaryFromRow(this.database.prepare(`
+      SELECT * FROM research_record_summaries WHERE id = ?
+    `).get(id)) };
   }
 
   createCognitionUpdate(topicId, { recordId, sourceContentVersionId }) {
