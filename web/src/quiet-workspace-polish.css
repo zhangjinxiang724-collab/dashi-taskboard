@@ -1157,6 +1157,8 @@
 .research-summary-form textarea:focus { border-color: var(--qw-color-border-strong); outline: none; }
 .research-summary-form footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
 .research-summary-form footer > button:first-child { border: 0; background: transparent; color: var(--qw-color-text-muted); }
+.research-summary-header-actions, .research-summary-empty-actions, .research-summary-ai-row { display: flex; align-items: center; gap: 8px; }
+.research-summary-ai-row { justify-content: flex-end; }
 .research-content-transcript > h3 { margin: 20px 24px 2px; color: var(--qw-color-text); font-size: 13px; font-weight: 600; }
 .research-content-messages pre { overflow: auto; padding: 12px; border-radius: 6px; background: var(--qw-color-surface-muted); white-space: pre-wrap; }
 .research-content-placeholder { color: var(--qw-color-text-faint); font-style: italic; }

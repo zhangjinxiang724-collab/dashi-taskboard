@@ -128,6 +128,12 @@ export interface ResearchRecordSummaryDraft {
   unresolved: string;
 }
 
+export interface ResearchSummaryAiDraft extends ResearchRecordSummaryDraft {
+  sourceContentVersionId: string;
+  summaryVersion: number | null;
+  sourceTextComplete: boolean;
+}
+
 export interface CognitionUpdate {
   id: string;
   topicId: string;

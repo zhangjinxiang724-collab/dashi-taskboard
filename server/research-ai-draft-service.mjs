@@ -112,6 +112,8 @@ const OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_MODEL = "qwen3.5:9b";
 const DEFAULT_OLLAMA_KEEP_ALIVE = "5m";
 const DEFAULT_OLLAMA_MAX_OUTPUT_TOKENS = 320;
+const DEFAULT_SCHEMA_NAME = "research_cognition_update_draft";
+const DEFAULT_REPAIR_INSTRUCTIONS = "上一次输出没有通过结构、类型、事实边界或改动清单验证。请重新检查：REVISE 至少一项 MODIFY；ADD 至少一项 ADD 且不得无依据 MODIFY；REINFORCE 和 UNCERTAIN 不得有改动；MODIFY 只能引用给出的 claim_id；未知必须保持未知；不得增强证据；不得跑离主题；V1 不允许 REMOVE。";
 
 function positiveInteger(value, fallback) {
   const number = Number(value);
@@ -174,7 +176,14 @@ export function createResearchAiProvider({ environment = process.env, fetchImpl 
     return {
       name: "ollama",
       model: config.model,
-      async generate(input, { repair = false, previousOutput = "" } = {}) {
+      async generate(input, {
+        repair = false,
+        previousOutput = "",
+        outputSchema = OUTPUT_SCHEMA,
+        systemInstructions = SYSTEM_INSTRUCTIONS,
+        schemaName = DEFAULT_SCHEMA_NAME,
+        repairInstructions = DEFAULT_REPAIR_INSTRUCTIONS,
+      } = {}) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
         try {
@@ -187,16 +196,16 @@ export function createResearchAiProvider({ environment = process.env, fetchImpl 
               stream: false,
               think: config.think,
               keep_alive: config.keepAlive,
-              format: OUTPUT_SCHEMA,
+              format: outputSchema,
               options: {
                 temperature: config.temperature,
                 num_predict: config.maxOutputTokens,
               },
               messages: [
-                { role: "system", content: SYSTEM_INSTRUCTIONS },
+                { role: "system", content: systemInstructions },
                 {
                   role: "user",
-                  content: `${input}\n\n${repair ? `上一次输出没有通过结构、类型、事实边界或改动清单验证。请重新检查：REVISE 至少一项 MODIFY；ADD 至少一项 ADD 且不得无依据 MODIFY；REINFORCE 和 UNCERTAIN 不得有改动；MODIFY 只能引用给出的 claim_id；未知必须保持未知；不得增强证据；不得跑离主题；V1 不允许 REMOVE。\n上一次输出：\n${previousOutput}\n\n` : ""}请只返回符合以下 JSON Schema 的 JSON：\n${JSON.stringify(OUTPUT_SCHEMA)}`,
+                  content: `${input}\n\n${repair ? `${repairInstructions}\n上一次输出：\n${previousOutput}\n\n` : ""}请只返回符合以下 JSON Schema 的 JSON：\n${JSON.stringify(outputSchema)}`,
                 },
               ],
             }),
@@ -238,7 +247,14 @@ export function createResearchAiProvider({ environment = process.env, fetchImpl 
   return {
     name: "openai",
     model: config.model,
-    async generate(input, { repair = false, previousOutput = "" } = {}) {
+    async generate(input, {
+      repair = false,
+      previousOutput = "",
+      outputSchema = OUTPUT_SCHEMA,
+      systemInstructions = SYSTEM_INSTRUCTIONS,
+      schemaName = DEFAULT_SCHEMA_NAME,
+      repairInstructions = DEFAULT_REPAIR_INSTRUCTIONS,
+    } = {}) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
       try {
@@ -253,16 +269,16 @@ export function createResearchAiProvider({ environment = process.env, fetchImpl 
             model: config.model,
             store: false,
             max_output_tokens: 1_200,
-            instructions: SYSTEM_INSTRUCTIONS,
+            instructions: systemInstructions,
             input: repair
-              ? `${input}\n\n上一次输出没有通过结构、类型、事实边界或改动清单验证。请重新检查：REVISE 至少一项 MODIFY；ADD 至少一项 ADD 且不得无依据 MODIFY；REINFORCE 和 UNCERTAIN 不得有改动；MODIFY 只能引用给出的 claim_id；未知必须保持未知；不得增强证据；不得跑离主题；V1 不允许 REMOVE。\n上一次输出：\n${previousOutput}\n\n请严格按照指定 JSON Schema 重新输出一次。`
+              ? `${input}\n\n${repairInstructions}\n上一次输出：\n${previousOutput}\n\n请严格按照指定 JSON Schema 重新输出一次。`
               : input,
             text: {
               format: {
                 type: "json_schema",
-                name: "research_cognition_update_draft",
+                name: schemaName,
                 strict: true,
-                schema: OUTPUT_SCHEMA,
+                schema: outputSchema,
               },
             },
           }),

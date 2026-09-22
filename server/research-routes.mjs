@@ -18,6 +18,7 @@ const RESEARCH_RECORD_PATH = /^\/api\/research\/records\/([^/]+)$/;
 const RESEARCH_RECORD_CONTENT_PATH = /^\/api\/research\/records\/([^/]+)\/content$/;
 const RESEARCH_RECORD_CONTENT_VERSIONS_PATH = /^\/api\/research\/records\/([^/]+)\/content-versions$/;
 const RESEARCH_RECORD_SUMMARY_PATH = /^\/api\/research\/records\/([^/]+)\/summary$/;
+const RESEARCH_RECORD_SUMMARY_AI_DRAFT_PATH = /^\/api\/research\/records\/([^/]+)\/summary\/ai-draft$/;
 const RESEARCH_SUMMARY_PATH = /^\/api\/research\/summaries\/([^/]+)$/;
 const IMPORT_PREVIEW_PATH = /^\/api\/research\/imports\/previews\/([^/]+)$/;
 const IMPORT_PREVIEW_CONFIRM_PATH = /^\/api\/research\/imports\/previews\/([^/]+)\/confirm$/;
@@ -222,6 +223,18 @@ function parseResearchSummaryFields(body, ApiError, { creating = false } = {}) {
   };
 }
 
+function parseResearchSummaryAiDraft(body, ApiError) {
+  assertPlainObject(body, ApiError);
+  assertAllowedKeys(body, new Set(["sourceContentVersionId", "summaryVersion"]), ApiError);
+  const summaryVersion = body.summaryVersion === undefined || body.summaryVersion === null
+    ? null
+    : positiveVersion(body.summaryVersion, ApiError);
+  return {
+    sourceContentVersionId: text(body.sourceContentVersionId, "sourceContentVersionId", ApiError, { required: true, maxLength: 1_000 }),
+    summaryVersion,
+  };
+}
+
 function parseCognitionUpdatePatch(body, ApiError) {
   assertPlainObject(body, ApiError);
   assertAllowedKeys(body, new Set([
@@ -410,6 +423,7 @@ export async function handleResearchRequest({
   researchImports,
   researchCaptures,
   researchAiDrafts,
+  researchSummaryAiDrafts,
   readJson,
   sendJson,
   sendEmpty,
@@ -809,6 +823,35 @@ export async function handleResearchRequest({
       throw new ApiError(409, "RESEARCH_RECORDS_NOT_IN_INBOX", "One or more records are no longer in the inbox", { recordIds: result.recordIds });
     }
     sendJson(response, 200, { updated: result.updated });
+    return true;
+  }
+
+  const recordSummaryAiDraftMatch = pathname.match(RESEARCH_RECORD_SUMMARY_AI_DRAFT_PATH);
+  if (recordSummaryAiDraftMatch) {
+    if (request.method !== "POST") {
+      methodNotAllowed(response, ["POST"]);
+      return true;
+    }
+    if ([...url.searchParams.keys()].length > 0) throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Summary AI draft does not accept query parameters");
+    const recordId = decodeURIComponent(recordSummaryAiDraftMatch[1]);
+    const result = await researchSummaryAiDrafts.generate(
+      recordId,
+      parseResearchSummaryAiDraft(await readJson(request), ApiError),
+    );
+    if (result.kind === "record_not_found") throw new ApiError(404, "RESEARCH_RECORD_NOT_FOUND", "Research record not found");
+    if (result.kind === "source_version_invalid") throw new ApiError(400, "SOURCE_CONTENT_VERSION_INVALID", "The content version does not belong to this research record");
+    if (result.kind === "summary_conflict") throw new ApiError(409, "RESEARCH_SUMMARY_VERSION_CONFLICT", "Research summary changed elsewhere", { currentVersion: result.currentVersion });
+    if (result.kind === "source_unavailable") throw new ApiError(409, "RESEARCH_SUMMARY_SOURCE_UNAVAILABLE", "The source content version is unavailable");
+    if (result.kind === "source_too_long") throw new ApiError(413, "RESEARCH_AI_SOURCE_TOO_LONG", "The source content is too long for a complete AI draft");
+    if (result.kind === "not_configured") throw new ApiError(503, "RESEARCH_AI_NOT_CONFIGURED", "Research AI is not configured");
+    if (result.kind === "timeout") throw new ApiError(504, "RESEARCH_AI_TIMEOUT", "Research AI request timed out");
+    if (result.kind === "provider_error" || result.kind === "invalid_output") throw new ApiError(502, "RESEARCH_AI_DRAFT_FAILED", "Research AI could not produce a valid draft");
+    sendJson(response, 200, {
+      candidate: result.candidate,
+      sourceContentVersionId: result.sourceContentVersionId,
+      summaryVersion: result.summaryVersion,
+      sourceTextComplete: result.sourceTextComplete,
+    });
     return true;
   }
 

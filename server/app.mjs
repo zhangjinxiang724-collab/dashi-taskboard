@@ -35,6 +35,7 @@ import { ProjectSummaryService } from "./project-summary.mjs";
 import { ResearchImportService } from "./research-import-service.mjs";
 import { isChromeExtensionOrigin, ResearchCaptureService } from "./research-capture-service.mjs";
 import { createResearchAiProvider, ResearchAiDraftService, resolveResearchAiConfig } from "./research-ai-draft-service.mjs";
+import { ResearchSummaryAiDraftService } from "./research-summary-ai-draft-service.mjs";
 import { handleResearchRequest } from "./research-routes.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -1665,11 +1666,16 @@ export function createTaskboardServer(options = {}) {
   const researchImports = new ResearchImportService(database.research);
   const researchCaptures = new ResearchCaptureService(database.research);
   const researchAiConfig = resolveResearchAiConfig(options.processEnv ?? process.env);
+  const researchAiProvider = options.researchAiProvider ?? createResearchAiProvider({
+    environment: options.processEnv ?? process.env,
+    fetchImpl: options.researchAiFetch ?? globalThis.fetch,
+  });
   const researchAiDrafts = options.researchAiDraftService ?? new ResearchAiDraftService(database.research, {
-    provider: options.researchAiProvider ?? createResearchAiProvider({
-      environment: options.processEnv ?? process.env,
-      fetchImpl: options.researchAiFetch ?? globalThis.fetch,
-    }),
+    provider: researchAiProvider,
+    maxSourceChars: researchAiConfig.maxSourceChars,
+  });
+  const researchSummaryAiDrafts = options.researchSummaryAiDraftService ?? new ResearchSummaryAiDraftService(database.research, {
+    provider: researchAiProvider,
     maxSourceChars: researchAiConfig.maxSourceChars,
   });
   const events = new EventHub();
@@ -2512,6 +2518,7 @@ export function createTaskboardServer(options = {}) {
         researchImports,
         researchCaptures,
         researchAiDrafts,
+        researchSummaryAiDrafts,
         readJson,
         sendJson,
         sendEmpty,

@@ -1,9 +1,10 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { ApiError } from "../api";
 import { useTaskboardI18n } from "../i18n";
 import {
   createResearchRecordSummary,
+  generateResearchSummaryAiDraft,
   getResearchRecordSummary,
   updateResearchRecordSummary,
 } from "../researchApi";
@@ -42,12 +43,24 @@ export function ResearchSummaryPanel({
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [aiNotice, setAiNotice] = useState<string | null>(null);
+  const [aiSourceTextComplete, setAiSourceTextComplete] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const generationRequest = useRef(0);
+  const currentSourceVersionId = useRef(sourceContentVersionId);
+  const currentSummaryVersion = useRef<number | null>(null);
+  currentSourceVersionId.current = sourceContentVersionId;
+  currentSummaryVersion.current = summary?.version ?? null;
 
   useEffect(() => {
     let active = true;
+    generationRequest.current += 1;
     setLoading(true);
     setEditing(false);
+    setGenerating(false);
+    setAiNotice(null);
+    setAiSourceTextComplete(true);
     setError(null);
     getResearchRecordSummary(recordId, sourceContentVersionId)
       .then((next) => {
@@ -68,6 +81,74 @@ export function ResearchSummaryPanel({
     setDraft(draftFromSummary(summary));
     setError(null);
     setEditing(true);
+  }
+
+  function draftChanged() {
+    const original = draftFromSummary(summary);
+    return Object.keys(original).some((key) => (
+      draft[key as keyof ResearchRecordSummaryDraft] !== original[key as keyof ResearchRecordSummaryDraft]
+    ));
+  }
+
+  async function generateAiDraft() {
+    if (summary && !window.confirm(text(
+      "这会用新的 AI 草稿替换当前编辑内容，已保存的总结不会立即改变。",
+      "This replaces the editor with a new AI draft. The saved summary will not change yet.",
+    ))) return;
+    if (editing && draftChanged() && !window.confirm(text(
+      "当前有未保存的修改，继续会替换这些内容。",
+      "You have unsaved edits. Continuing will replace them.",
+    ))) return;
+
+    const requestId = ++generationRequest.current;
+    const requestedSourceVersionId = sourceContentVersionId;
+    const requestedSummaryVersion = summary?.version ?? null;
+    setGenerating(true);
+    setError(null);
+    setAiNotice(null);
+    try {
+      const result = await generateResearchSummaryAiDraft(
+        recordId,
+        requestedSourceVersionId,
+        requestedSummaryVersion,
+      );
+      if (requestId !== generationRequest.current) return;
+      if (
+        currentSourceVersionId.current !== requestedSourceVersionId
+        || result.sourceContentVersionId !== requestedSourceVersionId
+      ) {
+        setError(text(
+          "正文版本已经切换，这次 AI 草稿没有填入。请在当前版本重新起草。",
+          "The content version changed, so this AI draft was not inserted. Draft again for the current version.",
+        ));
+        return;
+      }
+      if (currentSummaryVersion.current !== requestedSummaryVersion || result.summaryVersion !== requestedSummaryVersion) {
+        setError(text(
+          "内容总结已经发生变化，请重新载入后再起草。",
+          "The summary changed. Reload it before drafting again.",
+        ));
+        return;
+      }
+      setDraft({
+        oneLineSummary: result.oneLineSummary,
+        coreContent: result.coreContent,
+        keyEvidence: result.keyEvidence,
+        unresolved: result.unresolved,
+      });
+      setAiSourceTextComplete(result.sourceTextComplete);
+      setEditing(true);
+      setAiNotice(text("AI 草稿已填入，请检查后再保存。", "AI draft inserted. Review it before saving."));
+    } catch {
+      if (requestId === generationRequest.current) {
+        setError(text(
+          "这次 AI 起草没有成功，可以重试或手动填写。",
+          "AI drafting did not succeed. Try again or fill it in manually.",
+        ));
+      }
+    } finally {
+      if (requestId === generationRequest.current) setGenerating(false);
+    }
   }
 
   async function save(event: FormEvent) {
@@ -105,15 +186,23 @@ export function ResearchSummaryPanel({
           <span>{text("重新理解这份资料", "Recall this source")}</span>
           <h3>{text("内容总结", "Content summary")}</h3>
         </div>
-        {!loading && !editing && summary && <button type="button" onClick={beginEditing}>{text("编辑", "Edit")}</button>}
+        {!loading && !editing && summary && <div className="research-summary-header-actions">
+          <button type="button" disabled={generating} onClick={() => void generateAiDraft()}>{generating ? text("正在起草…", "Drafting…") : text("AI 起草", "AI draft")}</button>
+          <button type="button" onClick={beginEditing}>{text("编辑", "Edit")}</button>
+        </div>}
       </header>
 
       {loading && <p className="research-summary-muted">{text("正在读取总结…", "Loading summary…")}</p>}
       {error && <div className="research-error" role="alert">{error}</div>}
+      {aiNotice && <p className="research-summary-muted" role="status">{aiNotice}</p>}
+      {!aiSourceTextComplete && <p className="research-summary-muted">{text("这条资料的文字可能不完整，AI 草稿可能遗漏信息。", "This source may be incomplete, so the AI draft may miss information.")}</p>}
 
       {!loading && !editing && !summary && <div className="research-summary-empty">
         <p>{text("还没有内容总结", "No content summary yet")}</p>
-        <button type="button" onClick={beginEditing}>{text("添加总结", "Add summary")}</button>
+        <div className="research-summary-empty-actions">
+          <button type="button" onClick={beginEditing}>{text("添加总结", "Add summary")}</button>
+          <button type="button" disabled={generating} onClick={() => void generateAiDraft()}>{generating ? text("正在起草…", "Drafting…") : text("AI 起草", "AI draft")}</button>
+        </div>
       </div>}
 
       {!loading && !editing && summary && <div className="research-summary-content">
@@ -136,6 +225,9 @@ export function ResearchSummaryPanel({
       </div>}
 
       {!loading && editing && <form className="research-summary-form" onSubmit={(event) => void save(event)}>
+        <div className="research-summary-ai-row">
+          <button type="button" disabled={saving || generating} onClick={() => void generateAiDraft()}>{generating ? text("正在起草…", "Drafting…") : text("AI 起草", "AI draft")}</button>
+        </div>
         <label>
           <span>{text("一句话总结", "One-line summary")}</span>
           <textarea
@@ -175,12 +267,12 @@ export function ResearchSummaryPanel({
           />
         </label>
         <footer>
-          <button type="button" disabled={saving} onClick={() => {
+          <button type="button" disabled={saving || generating} onClick={() => {
             setEditing(false);
             setDraft(draftFromSummary(summary));
             setError(null);
           }}>{text("取消", "Cancel")}</button>
-          <button className="button primary" type="submit" disabled={saving}>{saving ? text("正在保存…", "Saving…") : text("保存", "Save")}</button>
+          <button className="button primary" type="submit" disabled={saving || generating}>{saving ? text("正在保存…", "Saving…") : text("保存", "Save")}</button>
         </footer>
       </form>}
     </section>

@@ -15,6 +15,7 @@ import type {
   ResearchRecordContentVersion,
   ResearchRecordSummary,
   ResearchRecordSummaryDraft,
+  ResearchSummaryAiDraft,
   BrowserCapturePreview,
   ResearchCaptureClient,
   ResearchInboxPage,
@@ -355,6 +356,28 @@ export async function updateResearchRecordSummary(
     },
   );
   return data.summary;
+}
+
+export async function generateResearchSummaryAiDraft(
+  recordId: string,
+  sourceContentVersionId: string,
+  summaryVersion: number | null,
+): Promise<ResearchSummaryAiDraft> {
+  const data = await request<{
+    candidate: ResearchRecordSummaryDraft;
+    sourceContentVersionId: string;
+    summaryVersion: number | null;
+    sourceTextComplete: boolean;
+  }>(`/api/research/records/${encodeURIComponent(recordId)}/summary/ai-draft`, {
+    method: "POST",
+    body: JSON.stringify({ sourceContentVersionId, summaryVersion }),
+  });
+  return {
+    ...data.candidate,
+    sourceContentVersionId: data.sourceContentVersionId,
+    summaryVersion: data.summaryVersion,
+    sourceTextComplete: data.sourceTextComplete,
+  };
 }
 
 export async function createCognitionUpdate(
