@@ -986,7 +986,7 @@
 .research-import-final-preview dd { margin: 0; }
 .research-import-final-preview footer { display: flex; justify-content: flex-end; gap: 8px; }
 .research-import-final-preview footer > button:first-child { border: 0; background: transparent; color: var(--qw-color-text-muted); cursor: pointer; }
-.research-content-reader { width: min(760px, 94vw); }
+.research-content-reader { width: min(760px, 94vw); overflow-y: auto; }
 .research-content-meta { padding: 0 24px 12px; border-bottom: 1px solid var(--qw-color-border); color: var(--qw-color-text-faint); font-size: 11px; }
 .research-content-messages { overflow: auto; padding: 4px 24px 28px; }
 .research-content-messages article { padding: 18px 0; border-bottom: 1px solid var(--qw-color-border); }
