@@ -105,6 +105,7 @@ export interface ResearchRecordDraft {
   externalId: string | null;
   summary: string;
   note: string;
+  content: string;
   occurredAt: string;
 }
 

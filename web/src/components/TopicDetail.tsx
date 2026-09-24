@@ -42,24 +42,31 @@ function daysSince(value: string | null) {
 
 export function TopicDetail({
   topic,
+  recordCount,
   allTasks,
   onBack,
   onEdit,
   onChange,
   onOpenTask,
+  onCapture,
+  onRecordCountChange,
 }: {
   topic: TopicDetailType;
+  recordCount: number;
   allTasks: Task[];
   onBack: () => void;
   onEdit: () => void;
   onChange: (topic: TopicDetailType) => void;
   onOpenTask: (task: ResearchTaskSummary) => void;
+  onCapture: () => void;
+  onRecordCountChange: (count: number) => void;
 }) {
   const { text } = useTaskboardI18n();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [cognitionRefreshKey, setCognitionRefreshKey] = useState(0);
   const [linkTaskId, setLinkTaskId] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
 
   const linkedTaskIds = useMemo(
     () => new Set(topic.tasks.map((task) => task.id)),
@@ -149,7 +156,7 @@ export function TopicDetail({
       {error && <div className="research-error" role="alert">{error}</div>}
 
       <div className="research-detail-heading">
-        <h1>{topic.title}</h1>
+        <div><h1>{topic.title}</h1></div>
         <div className="research-topic-meta">
           <label className="research-status-control">
             <span className="sr-only">{text("研究状态", "Research status")}</span>
@@ -157,13 +164,21 @@ export function TopicDetail({
               {RESEARCH_STATUSES.map((status) => <option key={status} value={status}>{researchStatusLabel(status, text)}</option>)}
             </select>
           </label>
-          <span className={`research-meta-badge ${topic.confidenceLevel ? `confidence-${topic.confidenceLevel}` : ""}`}>
-            {confidenceLabel(topic.confidenceLevel, text)}
-          </span>
-          <span className="research-meta-date">{ageLabel}</span>
+          <span className="research-meta-date">{text("创建于", "Created")} {new Intl.DateTimeFormat(undefined,{year:"numeric",month:"long",day:"numeric"}).format(new Date(topic.createdAt))}</span>
+          <span className="research-meta-separator" aria-hidden="true">·</span>
+          <span className="research-meta-date">{text(`共 ${recordCount} 份资料`, `${recordCount} sources`)}</span>
         </div>
         {topic.labels.length > 0 && <div className="research-labels">{topic.labels.map((label) => <span key={label}>{label}</span>)}</div>}
       </div>
+
+      <nav className="research-journey" aria-label={text("研究主线", "Research journey")}>
+        {[
+          [text("研究主题", "Topic"), text("明确问题与方向", "Define the question")],
+          [text("研究资料", "Sources"), text("阅读资料，提取信息", "Read and extract")],
+          [text("内容总结", "Summary"), text("生成关键结论", "Form conclusions")],
+          [text("更新认知", "Cognition"), text("形成新的观点", "Update your view")],
+        ].map(([label, description],index) => <span key={label} className={index === 0 ? "active" : ""}><i>{index + 1}</i><b>{label}<small>{description}</small></b></span>)}
+      </nav>
 
       <section className="research-reading-section research-current-state">
         <div className="research-reading-heading">
@@ -180,6 +195,16 @@ export function TopicDetail({
         )}
       </section>
 
+      <ResearchRecordSection
+        topicId={topic.id}
+        onCapture={onCapture}
+        onTopicChange={onChange}
+        onCognitionChanged={() => setCognitionRefreshKey((value) => value + 1)}
+        onCountChange={onRecordCountChange}
+      />
+
+      <button className="research-settings-toggle" type="button" aria-expanded={showSettings} onClick={() => setShowSettings((value) => !value)}>{text("研究设置", "Research settings")} <span>{showSettings ? "−" : "+"}</span></button>
+      {showSettings && <div className="research-secondary-settings">
       <div className="research-focus-grid">
         <section className="research-reading-section research-core-question">
           <div className="research-reading-heading"><h2>{text("核心问题", "Core Question")}</h2></div>
@@ -237,11 +262,7 @@ export function TopicDetail({
         )}
       </section>
 
-      <ResearchRecordSection
-        topicId={topic.id}
-        onTopicChange={onChange}
-        onCognitionChanged={() => setCognitionRefreshKey((value) => value + 1)}
-      />
+      </div>}
       <CognitionUpdateHistory topicId={topic.id} refreshKey={cognitionRefreshKey} />
     </section>
   );

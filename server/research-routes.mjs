@@ -152,7 +152,7 @@ function researchRecordKind(value, ApiError) {
 }
 
 const RESEARCH_RECORD_FIELDS = new Set([
-  "title", "provider", "kind", "url", "externalId", "summary", "note", "occurredAt",
+  "title", "provider", "kind", "url", "externalId", "summary", "note", "content", "occurredAt",
 ]);
 
 function parseResearchRecordCreate(body, ApiError) {
@@ -166,6 +166,7 @@ function parseResearchRecordCreate(body, ApiError) {
     externalId: nullableText(body.externalId, "externalId", ApiError, { maxLength: 1_000 }),
     summary: text(body.summary, "summary", ApiError),
     note: text(body.note, "note", ApiError),
+    content: text(body.content, "content", ApiError),
     occurredAt: occurredAt(body.occurredAt, ApiError),
   };
 }
@@ -188,6 +189,7 @@ function parseResearchRecordUpdate(body, ApiError) {
   }
   if (body.summary !== undefined) changes.summary = text(body.summary, "summary", ApiError);
   if (body.note !== undefined) changes.note = text(body.note, "note", ApiError);
+  if (body.content !== undefined) changes.content = text(body.content, "content", ApiError);
   if (body.occurredAt !== undefined) changes.occurredAt = occurredAt(body.occurredAt, ApiError);
   if (Object.keys(changes).length === 0) {
     throw new ApiError(400, "INVALID_BODY", "At least one research record field must be changed");

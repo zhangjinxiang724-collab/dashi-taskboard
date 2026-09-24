@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect } from "react";
+import { useCallback, useState, useEffect, useMemo } from "react";
 
 import "../research.css";
 import { ApiError, listTasks } from "../api";
@@ -7,11 +7,11 @@ import {
   createTopic,
   getResearchInboxSummary,
   getTopic,
+  listResearchRecords,
   listTopics,
   updateTopic,
 } from "../researchApi";
 import {
-  RESEARCH_STATUSES,
   type ResearchTaskSummary,
   type Topic,
   type TopicDetail as TopicDetailType,
@@ -22,17 +22,10 @@ import { TopicDetail } from "./TopicDetail";
 import { ResearchImporter } from "./ResearchImporter";
 import { BrowserCapturePairing } from "./BrowserCapturePairing";
 import { ResearchInbox } from "./ResearchInbox";
-import { confidenceLabel, researchStatusLabel, TopicEditor } from "./TopicEditor";
+import { TopicEditor } from "./TopicEditor";
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : String(error);
-}
-
-function researchAge(value: string | null, text: (chinese: string, english: string) => string) {
-  if (!value) return text("尚未研究", "Not researched");
-  const days = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 86_400_000));
-  if (days === 0) return text("今天研究", "Today");
-  return text(`${days} 天未研究`, `${days} days ago`);
 }
 
 export function ResearchBoard({
@@ -55,6 +48,8 @@ export function ResearchBoard({
     new URL(document.baseURI).searchParams.get("researchView") === "inbox" ? "inbox" : "topics"
   ));
   const [inboxCount, setInboxCount] = useState(0);
+  const [search, setSearch] = useState("");
+  const [recordCounts, setRecordCounts] = useState<Record<string, number>>({});
 
   const reload = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -68,6 +63,11 @@ export function ResearchBoard({
       setTopics(nextTopics);
       setAllTasks(nextTasks);
       setInboxCount(nextInboxCount);
+      const counts = await Promise.all(nextTopics.map(async (topic) => {
+        try { return [topic.id, (await listResearchRecords(topic.id, signal)).length] as const; }
+        catch { return [topic.id, 0] as const; }
+      }));
+      setRecordCounts(Object.fromEntries(counts));
     } catch (loadError) {
       if ((loadError as Error).name !== "AbortError") setError(message(loadError));
     } finally {
@@ -80,6 +80,22 @@ export function ResearchBoard({
     void reload(controller.signal);
     return () => controller.abort();
   }, [reload]);
+
+  useEffect(() => {
+    const onViewChange = (event: Event) => setView((event as CustomEvent<"topics" | "inbox">).detail);
+    window.addEventListener("research-view-change", onViewChange);
+    return () => window.removeEventListener("research-view-change", onViewChange);
+  }, []);
+
+  const visibleTopics = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    return query ? topics.filter((topic) => `${topic.title}\n${topic.currentView}`.toLocaleLowerCase().includes(query)) : topics;
+  }, [search, topics]);
+
+  const updateSelectedTopicRecordCount = useCallback((count: number) => {
+    if (!selectedTopic) return;
+    setRecordCounts((current) => ({ ...current, [selectedTopic.id]: count }));
+  }, [selectedTopic?.id]);
 
   function replaceTopic(topic: Topic) {
     setTopics((current) => current.map((candidate) => candidate.id === topic.id ? topic : candidate));
@@ -136,11 +152,14 @@ export function ResearchBoard({
       <>
         <TopicDetail
           topic={selectedTopic}
+          recordCount={recordCounts[selectedTopic.id] ?? 0}
           allTasks={allTasks}
           onBack={() => setSelectedTopic(null)}
           onEdit={() => setEditorTopic(selectedTopic)}
           onChange={replaceTopicDetail}
           onOpenTask={onOpenTask}
+          onCapture={() => setShowCapturePairing(true)}
+          onRecordCountChange={updateSelectedTopicRecordCount}
         />
         {editorTopic !== undefined && (
           <TopicEditor
@@ -151,6 +170,7 @@ export function ResearchBoard({
             onSave={(draft) => void saveTopic(draft)}
           />
         )}
+        {showCapturePairing && <BrowserCapturePairing onClose={() => setShowCapturePairing(false)} />}
       </>
     );
   }
@@ -159,64 +179,42 @@ export function ResearchBoard({
     <section className="research-board">
       <div className="research-board-heading">
         <div>
-          <h1>{text("研究", "Research")}</h1>
-          <p>{text("管理那些需要长期思考和持续跟踪的主题。", "Manage topics that need long-term thinking and continued attention.")}</p>
+          <h1>{view === "inbox" ? text("资料库", "Library") : text("我的研究", "My Research")}</h1>
+          <p>{view === "inbox" ? text("收好资料，再把它放进长期研究主题。", "Collect sources and organize them into long-term topics.") : text("持续跟踪和分析你关心的问题。", "Keep tracking and analysing the questions you care about.")}</p>
         </div>
         <div className="research-board-actions">
-          <button className="button" type="button" onClick={() => setShowCapturePairing(true)}>{text("连接浏览器扩展", "Connect browser extension")}</button>
-          <button className="button" type="button" onClick={() => setShowImporter(true)}>{text("导入 ChatGPT 历史", "Import ChatGPT history")}</button>
+          <button className="button subtle" type="button" onClick={() => setShowCapturePairing(true)}>{text("连接扩展", "Connect extension")}</button>
+          <button className="button subtle" type="button" onClick={() => setShowImporter(true)}>{text("导入", "Import")}</button>
           <button className="button primary" type="button" onClick={() => setEditorTopic(null)}>＋ {text("新建主题", "New topic")}</button>
         </div>
       </div>
-      <nav className="research-primary-views" aria-label={text("研究工作视图", "Research work views")}>
-        <button className={view === "topics" ? "active" : ""} type="button" onClick={() => setView("topics")}>{text("主题", "Topics")}</button>
-        <button className={view === "inbox" ? "active" : ""} type="button" onClick={() => setView("inbox")}>{text("待整理记录", "Inbox records")} <span>{inboxCount}</span></button>
-      </nav>
+      {view === "topics" && topics.length > 0 && <div className="research-home-tools">
+        <label><span className="sr-only">{text("搜索研究主题", "Search research topics")}</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={text("搜索研究主题", "Search research topics")} /></label>
+        <button type="button" onClick={() => setView("inbox")}>{text("待整理资料", "Inbox")} <span>{inboxCount}</span></button>
+      </div>}
       {error && <div className="research-error" role="alert">{error}</div>}
       {view === "inbox" ? <ResearchInbox topics={topics} onCountChange={setInboxCount} onTopicCreated={upsertTopic} /> : loading ? <div className="research-loading">{text("正在读取研究主题…", "Loading research topics…")}</div> : (
-        <div className="research-topic-groups">
-          {RESEARCH_STATUSES.map((status) => {
-            const statusTopics = topics.filter((topic) => topic.status === status);
-            return (
-              <section key={status} className={`research-topic-group status-${status}`}>
-                <header>
-                  <h2>{researchStatusLabel(status, text)}</h2>
-                  <span>{statusTopics.length}</span>
-                </header>
-                <div className="research-topic-list">
-                  {statusTopics.map((topic) => (
-                    <button key={topic.id} className="research-topic-row" type="button" onClick={() => void openTopic(topic.id)}>
-                      <span className="research-topic-primary">
-                        <span className="research-topic-title-line">
-                          <strong>{topic.title}</strong>
-                          <span className={`research-status-badge status-${topic.status}`}>{researchStatusLabel(topic.status, text)}</span>
-                        </span>
-                        <span className="research-topic-summary">
-                          {topic.currentView || text("当前还没有形成明确观点。", "No clear current view yet.")}
-                        </span>
-                      </span>
-                      <span className="research-topic-confidence">
-                        {confidenceLabel(topic.confidenceLevel, text)}
-                      </span>
-                      <span className="research-topic-open-count">
-                        {topic.openQuestionCount} {text("个未解决问题", "open questions")}
-                      </span>
-                      <span className="research-topic-age">{researchAge(topic.lastResearchedAt, text)}</span>
-                      <span className="research-topic-next">
-                        <small>{text("下一步", "Next")}</small>
-                        {topic.nextAction || text("还没有安排下一步", "No next action yet")}
-                      </span>
-                      <span className="research-topic-chevron" aria-hidden="true">›</span>
-                    </button>
-                  ))}
-                  {statusTopics.length === 0 && (
-                    <div className="research-group-empty">{text("这个阶段暂时没有主题。", "No topics in this stage yet.")}</div>
-                  )}
-                </div>
-              </section>
-            );
-          })}
-        </div>
+        <>
+        {topics.length === 0 && <section className="research-first-start" aria-label={text("开始使用 Research OS", "Get started with Research OS")}>
+          <div>
+            <h2>{text("开始你的第一个研究主题", "Start your first research topic")}</h2>
+            <p>{text("创建一个长期研究主题，或先收进一条资料。", "Create a long-term research topic, or capture a source first.")}</p>
+          </div>
+          <div className="research-first-start-actions">
+            <button className="button primary" type="button" onClick={() => setEditorTopic(null)}>{text("创建研究主题", "Create research topic")}</button>
+            <button className="button" type="button" onClick={() => setShowCapturePairing(true)}>{text("收一条资料", "Capture a source")}</button>
+          </div>
+          <small>{text("收资料前需要先安装并连接 Research OS 浏览器扩展。", "Install and connect the Research OS browser extension before capturing a source.")}</small>
+        </section>}
+        <section className="research-library-list" aria-label={text("研究主题列表", "Research topics")}>
+          {visibleTopics.map((topic) => <button key={topic.id} className="research-library-row" type="button" onClick={() => void openTopic(topic.id)}>
+            <span className="research-library-copy"><strong>{topic.title}</strong><span>{topic.currentView || text("还没有形成当前观点。", "No current view yet.")}</span></span>
+            <span className="research-library-meta"><time dateTime={topic.updatedAt}>{text("更新于", "Updated")} {new Intl.DateTimeFormat(undefined,{month:"short",day:"numeric"}).format(new Date(topic.updatedAt))}</time><span>{recordCounts[topic.id] ?? 0} {text("份资料", "sources")}</span></span>
+            <span className="research-library-more" aria-label={text("更多操作", "More actions")}>•••</span>
+          </button>)}
+          {visibleTopics.length === 0 && <div className="research-group-empty">{text("没有找到相关研究主题。", "No matching topics.")}</div>}
+        </section>
+        </>
       )}
       {editorTopic !== undefined && (
         <TopicEditor

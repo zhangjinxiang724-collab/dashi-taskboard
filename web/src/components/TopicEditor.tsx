@@ -93,8 +93,10 @@ export function TopicEditor({
       <form className="research-topic-form" role="dialog" aria-modal="true" aria-labelledby="research-editor-title" onSubmit={submit}>
         <header>
           <div>
-            <span>{text("Research Topic", "Research Topic")}</span>
             <h2 id="research-editor-title">{topic ? text("编辑主题", "Edit topic") : text("新建主题", "New topic")}</h2>
+            <p>{topic
+              ? text("调整这个研究主题的信息。", "Update this research topic.")
+              : text("创建一个研究主题，开始你的分析与思考。", "Create a research topic and begin your analysis.")}</p>
           </div>
           <button type="button" className="icon-button" onClick={onCancel} aria-label={text("关闭", "Close")}>×</button>
         </header>
@@ -103,39 +105,46 @@ export function TopicEditor({
             <span>{text("主题名称", "Topic title")}</span>
             <input autoFocus required maxLength={300} value={title} onChange={(event) => setTitle(event.target.value)} placeholder={text("例如：BSX 长期投资研究", "For example: Long-term BSX research")} />
           </label>
-          <label>
-            <span>{text("研究状态", "Research status")}</span>
-            <select value={status} onChange={(event) => setStatus(event.target.value as ResearchStatus)}>
-              {RESEARCH_STATUSES.map((candidate) => <option key={candidate} value={candidate}>{researchStatusLabel(candidate, text)}</option>)}
-            </select>
-          </label>
-          <label>
-            <span>{text("置信度", "Confidence")}</span>
-            <select value={confidenceLevel ?? ""} onChange={(event) => setConfidenceLevel((event.target.value || null) as ConfidenceLevel | null)}>
-              <option value="">{text("未设置", "Not set")}</option>
-              {CONFIDENCE_LEVELS.map((candidate) => <option key={candidate} value={candidate}>{confidenceLabel(candidate, text)}</option>)}
-            </select>
-          </label>
-          <label>
-            <span>{text("标签（英文逗号分隔）", "Labels (comma separated)")}</span>
-            <input value={labels} onChange={(event) => setLabels(event.target.value)} />
-          </label>
           <label className="wide">
-            <span>{text("当前观点", "Current View")}</span>
-            <textarea rows={5} value={currentView} onChange={(event) => setCurrentView(event.target.value)} />
+            <span>{text("核心问题（可选）", "Core Question (optional)")}</span>
+            <textarea rows={3} maxLength={500} value={coreQuestion} onChange={(event) => setCoreQuestion(event.target.value)} placeholder={text("例如：试点是否显著提升了公交运行效率？", "For example: Did the pilot improve transit efficiency?")} />
+            <small className="research-topic-character-count">{coreQuestion.length}/500</small>
           </label>
-          <label className="wide">
-            <span>{text("核心问题", "Core Question")}</span>
-            <textarea rows={3} value={coreQuestion} onChange={(event) => setCoreQuestion(event.target.value)} />
-          </label>
-          <label className="wide">
-            <span>{text("下一步行动", "Next Action")}</span>
-            <textarea rows={3} value={nextAction} onChange={(event) => setNextAction(event.target.value)} />
-          </label>
-          <label className="wide">
-            <span>{text("重新研究触发条件", "Review Trigger")}</span>
-            <textarea rows={2} value={reviewTrigger} onChange={(event) => setReviewTrigger(event.target.value)} placeholder={text("例如：下一季度财报发布", "For example: Next quarterly results")} />
-          </label>
+          <p className="research-topic-form-hint wide">{text("先写下主题名称就可以开始，其他内容以后再补。", "Start with a title. You can add the rest later.")}</p>
+          <details className="research-topic-more wide" open={Boolean(topic)}>
+            <summary><span><strong>{text("更多设置", "More settings")}</strong><small>{text("研究状态、置信度、标签、当前观点、下一步等", "Status, confidence, labels, current view and next steps")}</small></span><i aria-hidden="true">⌄</i></summary>
+            <div className="research-form-fields">
+              <label>
+                <span>{text("研究状态", "Research status")}</span>
+                <select value={status} onChange={(event) => setStatus(event.target.value as ResearchStatus)}>
+                  {RESEARCH_STATUSES.map((candidate) => <option key={candidate} value={candidate}>{researchStatusLabel(candidate, text)}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>{text("置信度", "Confidence")}</span>
+                <select value={confidenceLevel ?? ""} onChange={(event) => setConfidenceLevel((event.target.value || null) as ConfidenceLevel | null)}>
+                  <option value="">{text("未设置", "Not set")}</option>
+                  {CONFIDENCE_LEVELS.map((candidate) => <option key={candidate} value={candidate}>{confidenceLabel(candidate, text)}</option>)}
+                </select>
+              </label>
+              <label className="wide">
+                <span>{text("标签（逗号分隔）", "Labels (comma separated)")}</span>
+                <input value={labels} onChange={(event) => setLabels(event.target.value)} />
+              </label>
+              <label className="wide">
+                <span>{text("当前观点", "Current View")}</span>
+                <textarea rows={5} value={currentView} onChange={(event) => setCurrentView(event.target.value)} />
+              </label>
+              <label className="wide">
+                <span>{text("下一步行动", "Next Action")}</span>
+                <textarea rows={3} value={nextAction} onChange={(event) => setNextAction(event.target.value)} />
+              </label>
+              <label className="wide">
+                <span>{text("重新研究触发条件", "Review Trigger")}</span>
+                <textarea rows={2} value={reviewTrigger} onChange={(event) => setReviewTrigger(event.target.value)} placeholder={text("例如：下一季度财报发布", "For example: Next quarterly results")} />
+              </label>
+            </div>
+          </details>
         </div>
         {error && <div className="form-error" role="alert">{error}</div>}
         <footer>

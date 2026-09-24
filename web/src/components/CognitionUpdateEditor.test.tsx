@@ -40,6 +40,37 @@ afterEach(cleanup);
 beforeEach(() => vi.clearAllMocks());
 
 describe("CognitionUpdateEditor", () => {
+  it("shows save progress and reports a saved draft without applying the Topic", async () => {
+    let resolveSave!: (value: CognitionUpdate) => void;
+    vi.mocked(updateCognitionUpdate).mockReturnValue(new Promise((resolve) => { resolveSave = resolve; }));
+    const onDraftSaved = vi.fn();
+    const onClose = vi.fn();
+    const onApplied = vi.fn();
+    render(<CognitionUpdateEditor initialUpdate={update} onClose={onClose} onDraftSaved={onDraftSaved} onApplied={onApplied} />);
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+    expect(screen.getByRole("button", { name: "正在保存…" })).toBeTruthy();
+    resolveSave({ ...update, version: 2 });
+    await waitFor(() => expect(onDraftSaved).toHaveBeenCalledTimes(1));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onApplied).not.toHaveBeenCalled();
+  });
+
+  it("shows apply progress and reports the updated Topic", async () => {
+    const topic = { id: "topic-1", currentView: "更新后的观点" } as never;
+    vi.mocked(updateCognitionUpdate).mockResolvedValue({ ...update, version: 2 });
+    let resolveApply!: (value: Awaited<ReturnType<typeof applyCognitionUpdate>>) => void;
+    vi.mocked(applyCognitionUpdate).mockReturnValue(new Promise((resolve) => { resolveApply = resolve; }));
+    const onApplied = vi.fn();
+    render(<CognitionUpdateEditor initialUpdate={update} onClose={() => {}} onApplied={onApplied} />);
+    fireEvent.change(screen.getByLabelText("新信息"), { target: { value: "新信息" } });
+    fireEvent.change(screen.getByLabelText("判断变化"), { target: { value: "判断变化" } });
+    fireEvent.change(screen.getByLabelText("新的观点"), { target: { value: "更新后的观点" } });
+    fireEvent.click(screen.getByRole("button", { name: "更新观点" }));
+    expect(await screen.findByRole("button", { name: "正在更新观点…" })).toBeTruthy();
+    resolveApply({ update: { ...update, status: "applied", version: 3 }, topic });
+    await waitFor(() => expect(onApplied).toHaveBeenCalledWith(topic));
+  });
+
   it("reloads explicitly after conflict, preserves thinking and resets the proposal", async () => {
     vi.mocked(updateCognitionUpdate).mockImplementation(async (draft, changes) => ({ ...draft, ...changes, version: draft.version + 1 }));
     vi.mocked(applyCognitionUpdate).mockRejectedValue(new ApiError(409, { error: { code: "COGNITION_TOPIC_VERSION_CONFLICT", message: "conflict" } }));

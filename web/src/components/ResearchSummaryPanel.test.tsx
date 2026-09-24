@@ -116,7 +116,7 @@ describe("ResearchSummaryPanel", () => {
     expect(await screen.findByText("还没有内容总结")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "AI 起草" }));
     expect(await screen.findByDisplayValue("AI 起草的一句话。")).toBeTruthy();
-    expect(screen.getByText("AI 草稿已填入，请检查后再保存。")).toBeTruthy();
+    expect(screen.getByText("AI 草稿 · 未保存")).toBeTruthy();
     expect(api.createResearchRecordSummary).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByLabelText("一句话总结"), { target: { value: "人工检查后的总结。" } });
@@ -127,6 +127,8 @@ describe("ResearchSummaryPanel", () => {
       "content-version-1",
       expect.objectContaining({ oneLineSummary: "人工检查后的总结。" }),
     ));
+    expect(await screen.findByText("已保存")).toBeTruthy();
+    expect(screen.queryByText("AI 草稿 · 未保存")).toBeNull();
   });
 
   it("does not replace an existing Summary unless the user confirms", async () => {

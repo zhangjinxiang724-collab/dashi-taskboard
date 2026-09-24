@@ -41,12 +41,14 @@ function readableError(error: unknown) {
 export function CognitionUpdateEditor({
   initialUpdate,
   onClose,
+  onDraftSaved,
   onApplied,
   onChanged,
   sourceTextComplete = true,
 }: {
   initialUpdate: CognitionUpdate;
   onClose: () => void;
+  onDraftSaved?: () => void;
   onApplied: (topic: TopicDetail) => void;
   onChanged?: () => void;
   sourceTextComplete?: boolean;
@@ -57,6 +59,7 @@ export function CognitionUpdateEditor({
   const [impact, setImpact] = useState(initialUpdate.impact);
   const [proposedCurrentView, setProposedCurrentView] = useState(initialUpdate.proposedCurrentView);
   const [pending, setPending] = useState(false);
+  const [operation, setOperation] = useState<"saving" | "applying" | "rejecting" | "reloading" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [topicConflict, setTopicConflict] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -106,22 +109,26 @@ export function CognitionUpdateEditor({
 
   async function saveDraft() {
     setPending(true);
+    setOperation("saving");
     setError(null);
     try {
       const saved = await updateCognitionUpdate(update, changes());
       setUpdate(saved);
       onChanged?.();
+      onDraftSaved?.();
       onClose();
     } catch (saveError) {
       setError(readableError(saveError));
     } finally {
       setPending(false);
+      setOperation(null);
     }
   }
 
   async function apply() {
     if (topicConflict) return;
     setPending(true);
+    setOperation("applying");
     setError(null);
     try {
       const saved = await updateCognitionUpdate(update, changes());
@@ -135,11 +142,13 @@ export function CognitionUpdateEditor({
       setError(readableError(applyError));
     } finally {
       setPending(false);
+      setOperation(null);
     }
   }
 
   async function viewLatest() {
     setPending(true);
+    setOperation("reloading");
     try {
       const saved = await updateCognitionUpdate(update, changes());
       setUpdate(saved);
@@ -156,11 +165,13 @@ export function CognitionUpdateEditor({
       setError(readableError(loadError));
     } finally {
       setPending(false);
+      setOperation(null);
     }
   }
 
   async function reject() {
     setPending(true);
+    setOperation("rejecting");
     setError(null);
     try {
       const saved = await updateCognitionUpdate(update, changes());
@@ -172,6 +183,7 @@ export function CognitionUpdateEditor({
       setError(readableError(rejectError));
     } finally {
       setPending(false);
+      setOperation(null);
     }
   }
 
@@ -238,11 +250,11 @@ export function CognitionUpdateEditor({
         </div>}
         {notice && <div className="cognition-conflict" role="status">{notice}</div>}
         <footer>
-          <button type="button" disabled={pending} onClick={() => void reject()}>不采用这次更新</button>
+          <button type="button" disabled={pending} onClick={() => void reject()}>{operation === "rejecting" ? "正在处理…" : "不采用这次更新"}</button>
           <div>
-            <button type="button" disabled={pending} onClick={() => void saveDraft()}>保存草稿</button>
+            <button type="button" disabled={pending} onClick={() => void saveDraft()}>{operation === "saving" ? "正在保存…" : "保存草稿"}</button>
             <button className="button primary" type="button" disabled={pending || topicConflict} onClick={() => void apply()}>
-              {(updateType === "uncertain" || updateType === "reinforce") && unchanged ? "记录影响" : "更新观点"}
+              {operation === "applying" ? "正在更新观点…" : (updateType === "uncertain" || updateType === "reinforce") && unchanged ? "记录影响" : "更新观点"}
             </button>
           </div>
         </footer>

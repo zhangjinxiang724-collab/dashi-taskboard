@@ -7,18 +7,18 @@
  */
 
 :root {
-  --qw-color-canvas: #fbfbfa;
-  --qw-color-sidebar: #f5f5f3;
+  --qw-color-canvas: #ffffff;
+  --qw-color-sidebar: #f7f7f8;
   --qw-color-surface: #ffffff;
   --qw-color-surface-subtle: #f7f7f5;
   --qw-color-surface-hover: #f0f0ee;
-  --qw-color-text: #181817;
-  --qw-color-text-muted: #666662;
-  --qw-color-text-faint: #969691;
-  --qw-color-border: #e6e6e2;
-  --qw-color-border-strong: #d8d8d3;
-  --qw-color-accent: #2f6fdd;
-  --qw-color-accent-soft: #edf3ff;
+  --qw-color-text: #0d0d0d;
+  --qw-color-text-muted: #6b6b6b;
+  --qw-color-text-faint: #8a8a8a;
+  --qw-color-border: #e7e7e7;
+  --qw-color-border-strong: #d6d6d6;
+  --qw-color-accent: #b86e82;
+  --qw-color-accent-soft: #f8eef1;
   --qw-color-positive: #2f855a;
   --qw-color-positive-soft: #edf8f1;
   --qw-color-waiting: #9a6811;
@@ -39,9 +39,9 @@
   --qw-space-6: 24px;
   --qw-space-8: 32px;
   --qw-space-10: 40px;
-  --qw-radius-sm: 6px;
-  --qw-radius-md: 9px;
-  --qw-radius-lg: 12px;
+  --qw-radius-sm: 9px;
+  --qw-radius-md: 13px;
+  --qw-radius-lg: 18px;
   --qw-border-width: 1px;
   --qw-shadow-card: 0 1px 2px rgba(22, 22, 20, 0.035);
   --qw-shadow-float: 0 14px 38px rgba(22, 22, 20, 0.12);

@@ -21,8 +21,14 @@ export function CognitionUpdateHistory({ topicId, refreshKey = 0 }: { topicId: s
   }, [refreshKey, topicId]);
 
   if (updates.length === 0) return null;
+  const latestApplied = updates.find((update) => update.status === "applied");
   return (
     <section className="cognition-update-history">
+      <div className="cognition-latest">
+        <span>最近认知变化</span>
+        <h3>{latestApplied ? TYPE_LABEL[latestApplied.updateType] : "还没有已应用的认知变化"}</h3>
+        {latestApplied && <p>{latestApplied.impact || latestApplied.newInformation}</p>}
+      </div>
       <button type="button" className="cognition-history-toggle" onClick={() => setOpen((value) => !value)}>
         <span>认知更新记录 <small>{updates.length}</small></span>
         <span>{open ? "收起" : "查看"}</span>

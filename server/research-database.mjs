@@ -177,6 +177,89 @@ function contentPreview(content) {
   return "";
 }
 
+function manualContentPayload(record, body, versionNumber) {
+  return {
+    version: "research-record-content-v1",
+    externalId: record.externalId,
+    title: record.title,
+    messages: [{
+      id: `${record.id}-manual-${versionNumber}`,
+      role: "unknown",
+      text: body,
+      occurredAt: record.occurredAt,
+      order: 0,
+    }],
+  };
+}
+
+function manualContentBody(content) {
+  const message = content?.content?.messages?.[0];
+  if (typeof message?.text === "string") return message.text.trim();
+  return (message?.parts ?? [])
+    .filter((part) => part.type === "text" && typeof part.text === "string")
+    .map((part) => part.text)
+    .join("\n")
+    .trim();
+}
+
+function storeManualContentVersion(database, record, body, timestamp) {
+  const nextVersionNumber = Number(database.prepare(`
+    SELECT COALESCE(MAX(version_number), 0) + 1 AS version_number
+    FROM research_record_content_versions WHERE record_id = ?
+  `).get(record.id).version_number);
+  const payload = manualContentPayload(record, body, nextVersionNumber);
+  const contentBuffer = Buffer.from(JSON.stringify(payload), "utf8");
+  const contentHash = `sha256:${createHash("sha256").update(contentBuffer).digest("hex")}`;
+  const compressed = gzipSync(contentBuffer);
+  const completenessDetails = {
+    topBoundaryConfirmed: true,
+    stablePasses: 1,
+    loadingAbsent: true,
+    conversationIdStable: true,
+    unresolvedBranches: false,
+    unsupportedContentCount: 0,
+    unsupportedContentCounts: {},
+    reasons: [],
+    textTranscriptComplete: true,
+    richContentComplete: true,
+    latestBoundaryConfirmed: true,
+  };
+
+  database.prepare(`
+    UPDATE research_record_content_versions SET is_current = 0
+    WHERE record_id = ? AND is_current = 1
+  `).run(record.id);
+  database.prepare(`
+    INSERT INTO research_record_content_versions (
+      id, record_id, version_number, capture_adapter, completeness,
+      completeness_details, relation_to_previous, content_encoding, content_blob,
+      content_hash, source_fingerprint, message_count, omitted_message_count,
+      source_created_at, source_updated_at, captured_at, is_current, created_at
+    ) VALUES (?, ?, ?, 'manual-v1', 'complete', ?, ?, 'gzip-json-v1', ?, ?, ?, 1, 0, ?, ?, ?, 1, ?)
+  `).run(
+    randomUUID(), record.id, nextVersionNumber, JSON.stringify(completenessDetails),
+    nextVersionNumber === 1 ? "initial" : "append", compressed, contentHash,
+    contentHash, record.occurredAt, timestamp, timestamp, timestamp,
+  );
+  database.prepare(`
+    INSERT INTO research_record_contents (
+      record_id, content_encoding, content_blob, content_hash, message_count,
+      source_created_at, source_updated_at, omitted_message_count, deleted_at,
+      created_at, updated_at
+    ) VALUES (?, 'gzip-json-v1', ?, ?, 1, ?, ?, 0, NULL, ?, ?)
+    ON CONFLICT(record_id) DO UPDATE SET
+      content_blob = excluded.content_blob,
+      content_hash = excluded.content_hash,
+      message_count = excluded.message_count,
+      source_created_at = excluded.source_created_at,
+      source_updated_at = excluded.source_updated_at,
+      omitted_message_count = 0,
+      deleted_at = NULL,
+      updated_at = excluded.updated_at
+  `).run(record.id, compressed, contentHash, record.occurredAt, timestamp, timestamp, timestamp);
+  return nextVersionNumber;
+}
+
 export class ResearchDatabase {
   constructor(database, { databasePath } = {}) {
     this.database = database;
@@ -1272,30 +1355,38 @@ export class ResearchDatabase {
       createdAt: timestamp,
       updatedAt: timestamp,
     };
-    this.database.prepare(`
-      INSERT INTO research_records (
-        id, primary_topic_id, title, provider, kind, url, external_id,
-        summary, note, occurred_at, capture_adapter, version, deleted_at,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      record.id,
-      record.topicId,
-      record.title,
-      record.provider,
-      record.kind,
-      record.url,
-      record.externalId,
-      record.summary,
-      record.note,
-      record.occurredAt,
-      record.captureAdapter,
-      record.version,
-      record.deletedAt,
-      record.createdAt,
-      record.updatedAt,
-    );
-    return { kind: "created", record };
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`
+        INSERT INTO research_records (
+          id, primary_topic_id, title, provider, kind, url, external_id,
+          summary, note, occurred_at, capture_adapter, version, deleted_at,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        record.id,
+        record.topicId,
+        record.title,
+        record.provider,
+        record.kind,
+        record.url,
+        record.externalId,
+        record.summary,
+        record.note,
+        record.occurredAt,
+        record.captureAdapter,
+        record.version,
+        record.deletedAt,
+        record.createdAt,
+        record.updatedAt,
+      );
+      if (input.content.trim()) storeManualContentVersion(this.database, record, input.content.trim(), timestamp);
+      this.database.exec("COMMIT");
+      return { kind: "created", record: this.getResearchRecord(record.id) };
+    } catch (error) {
+      try { this.database.exec("ROLLBACK"); } catch {}
+      throw error;
+    }
   }
 
   updateResearchRecord(id, input) {
@@ -1304,38 +1395,58 @@ export class ResearchDatabase {
     if (current.version !== input.version) {
       return { kind: "conflict", currentVersion: current.version };
     }
+    const { content, ...recordChanges } = input.changes;
     const next = {
       ...current,
-      ...input.changes,
+      ...recordChanges,
       version: current.version + 1,
       updatedAt: now(),
     };
-    const result = this.database.prepare(`
-      UPDATE research_records
-      SET title = ?, provider = ?, kind = ?, url = ?, external_id = ?,
-          summary = ?, note = ?, occurred_at = ?, version = ?, updated_at = ?
-      WHERE id = ? AND version = ? AND deleted_at IS NULL
-    `).run(
-      next.title,
-      next.provider,
-      next.kind,
-      next.url,
-      next.externalId,
-      next.summary,
-      next.note,
-      next.occurredAt,
-      next.version,
-      next.updatedAt,
-      id,
-      input.version,
-    );
-    if (result.changes === 0) {
-      const latest = this.getResearchRecord(id);
-      return latest
-        ? { kind: "conflict", currentVersion: latest.version }
-        : { kind: "not_found" };
+    const nextBody = current.captureAdapter === "manual-v1" && typeof content === "string"
+      ? content.trim()
+      : null;
+    const currentContent = current.captureAdapter === "manual-v1"
+      ? this.getResearchRecordContent(id)
+      : null;
+    const contentChanged = nextBody !== null
+      && nextBody.length > 0
+      && nextBody !== manualContentBody(currentContent);
+
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = this.database.prepare(`
+        UPDATE research_records
+        SET title = ?, provider = ?, kind = ?, url = ?, external_id = ?,
+            summary = ?, note = ?, occurred_at = ?, version = ?, updated_at = ?
+        WHERE id = ? AND version = ? AND deleted_at IS NULL
+      `).run(
+        next.title,
+        next.provider,
+        next.kind,
+        next.url,
+        next.externalId,
+        next.summary,
+        next.note,
+        next.occurredAt,
+        next.version,
+        next.updatedAt,
+        id,
+        input.version,
+      );
+      if (result.changes === 0) {
+        this.database.exec("ROLLBACK");
+        const latest = this.getResearchRecord(id);
+        return latest
+          ? { kind: "conflict", currentVersion: latest.version }
+          : { kind: "not_found" };
+      }
+      if (contentChanged) storeManualContentVersion(this.database, next, nextBody, next.updatedAt);
+      this.database.exec("COMMIT");
+      return { kind: "updated", record: this.getResearchRecord(id) };
+    } catch (error) {
+      try { this.database.exec("ROLLBACK"); } catch {}
+      throw error;
     }
-    return { kind: "updated", record: this.getResearchRecord(id) };
   }
 
   deleteResearchRecord(id, version) {

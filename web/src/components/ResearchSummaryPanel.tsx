@@ -33,9 +33,13 @@ function errorMessage(error: unknown) {
 export function ResearchSummaryPanel({
   recordId,
   sourceContentVersionId,
+  sourceContentVersionNumber = 1,
+  sourceIsCurrent = true,
 }: {
   recordId: string;
   sourceContentVersionId: string;
+  sourceContentVersionNumber?: number;
+  sourceIsCurrent?: boolean;
 }) {
   const { text } = useTaskboardI18n();
   const [summary, setSummary] = useState<ResearchRecordSummary | null>(null);
@@ -44,7 +48,7 @@ export function ResearchSummaryPanel({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [aiNotice, setAiNotice] = useState<string | null>(null);
+  const [editStatus, setEditStatus] = useState<"dirty" | "ai-draft" | "saving" | "saved" | "save-error" | null>(null);
   const [aiSourceTextComplete, setAiSourceTextComplete] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const generationRequest = useRef(0);
@@ -59,7 +63,7 @@ export function ResearchSummaryPanel({
     setLoading(true);
     setEditing(false);
     setGenerating(false);
-    setAiNotice(null);
+    setEditStatus(null);
     setAiSourceTextComplete(true);
     setError(null);
     getResearchRecordSummary(recordId, sourceContentVersionId)
@@ -81,6 +85,12 @@ export function ResearchSummaryPanel({
     setDraft(draftFromSummary(summary));
     setError(null);
     setEditing(true);
+    setEditStatus(null);
+  }
+
+  function changeDraft(key: keyof ResearchRecordSummaryDraft, value: string) {
+    setDraft((current) => ({ ...current, [key]: value }));
+    setEditStatus("dirty");
   }
 
   function draftChanged() {
@@ -105,7 +115,6 @@ export function ResearchSummaryPanel({
     const requestedSummaryVersion = summary?.version ?? null;
     setGenerating(true);
     setError(null);
-    setAiNotice(null);
     try {
       const result = await generateResearchSummaryAiDraft(
         recordId,
@@ -138,7 +147,7 @@ export function ResearchSummaryPanel({
       });
       setAiSourceTextComplete(result.sourceTextComplete);
       setEditing(true);
-      setAiNotice(text("AI 草稿已填入，请检查后再保存。", "AI draft inserted. Review it before saving."));
+      setEditStatus("ai-draft");
     } catch {
       if (requestId === generationRequest.current) {
         setError(text(
@@ -158,6 +167,7 @@ export function ResearchSummaryPanel({
       return;
     }
     setSaving(true);
+    setEditStatus("saving");
     setError(null);
     try {
       const saved = summary
@@ -166,6 +176,7 @@ export function ResearchSummaryPanel({
       setSummary(saved);
       setDraft(draftFromSummary(saved));
       setEditing(false);
+      setEditStatus("saved");
     } catch (saveError) {
       if (saveError instanceof ApiError && saveError.code === "RESEARCH_SUMMARY_VERSION_CONFLICT") {
         setError(text("内容已经发生变化，请重新载入后再编辑。", "This summary changed. Reload it before editing again."));
@@ -174,6 +185,7 @@ export function ResearchSummaryPanel({
       } else {
         setError(errorMessage(saveError));
       }
+      setEditStatus("save-error");
     } finally {
       setSaving(false);
     }
@@ -194,15 +206,25 @@ export function ResearchSummaryPanel({
 
       {loading && <p className="research-summary-muted">{text("正在读取总结…", "Loading summary…")}</p>}
       {error && <div className="research-error" role="alert">{error}</div>}
-      {aiNotice && <p className="research-summary-muted" role="status">{aiNotice}</p>}
+      {editStatus && <p className={`research-summary-status is-${editStatus}`} role="status">{{
+        dirty: "有未保存修改",
+        "ai-draft": "AI 草稿 · 未保存",
+        saving: "正在保存…",
+        saved: "已保存",
+        "save-error": "保存失败，请重试",
+      }[editStatus]}</p>}
       {!aiSourceTextComplete && <p className="research-summary-muted">{text("这条资料的文字可能不完整，AI 草稿可能遗漏信息。", "This source may be incomplete, so the AI draft may miss information.")}</p>}
+
+      <p className="research-summary-version">这份总结对应资料 V{sourceContentVersionNumber}{sourceIsCurrent ? "" : " · 当前查看的是旧版本"}</p>
 
       {!loading && !editing && !summary && <div className="research-summary-empty">
         <p>{text("还没有内容总结", "No content summary yet")}</p>
+        <span>{text("把这份资料压缩成以后容易重新理解的内容。", "Condense this source so it is easy to understand again later.")}</span>
         <div className="research-summary-empty-actions">
           <button type="button" onClick={beginEditing}>{text("添加总结", "Add summary")}</button>
           <button type="button" disabled={generating} onClick={() => void generateAiDraft()}>{generating ? text("正在起草…", "Drafting…") : text("AI 起草", "AI draft")}</button>
         </div>
+        <small>{text("AI 只生成草稿，检查后由你决定是否保存。", "AI only creates a draft. You decide whether to save it after review.")}</small>
       </div>}
 
       {!loading && !editing && summary && <div className="research-summary-content">
@@ -227,6 +249,7 @@ export function ResearchSummaryPanel({
       {!loading && editing && <form className="research-summary-form" onSubmit={(event) => void save(event)}>
         <div className="research-summary-ai-row">
           <button type="button" disabled={saving || generating} onClick={() => void generateAiDraft()}>{generating ? text("正在起草…", "Drafting…") : text("AI 起草", "AI draft")}</button>
+          <span>{text("AI 只生成草稿，检查后由你决定是否保存。", "AI only creates a draft. You decide whether to save it after review.")}</span>
         </div>
         <label>
           <span>{text("一句话总结", "One-line summary")}</span>
@@ -236,7 +259,7 @@ export function ResearchSummaryPanel({
             maxLength={1000}
             value={draft.oneLineSummary}
             placeholder={text("用 1～3 句话写清这份资料最重要的内容", "Capture the most important point in 1–3 sentences")}
-            onChange={(event) => setDraft((current) => ({ ...current, oneLineSummary: event.target.value }))}
+            onChange={(event) => changeDraft("oneLineSummary", event.target.value)}
           />
         </label>
         <label>
@@ -245,7 +268,7 @@ export function ResearchSummaryPanel({
             rows={5}
             value={draft.coreContent}
             placeholder={text("记录 3～5 个重点，也可以自由分行", "Keep the main points, one per line if useful")}
-            onChange={(event) => setDraft((current) => ({ ...current, coreContent: event.target.value }))}
+            onChange={(event) => changeDraft("coreContent", event.target.value)}
           />
         </label>
         <label>
@@ -254,7 +277,7 @@ export function ResearchSummaryPanel({
             rows={4}
             value={draft.keyEvidence}
             placeholder={text("重要数据、案例或原文依据（可留空）", "Important data, cases, or source evidence (optional)")}
-            onChange={(event) => setDraft((current) => ({ ...current, keyEvidence: event.target.value }))}
+            onChange={(event) => changeDraft("keyEvidence", event.target.value)}
           />
         </label>
         <label>
@@ -263,7 +286,7 @@ export function ResearchSummaryPanel({
             rows={4}
             value={draft.unresolved}
             placeholder={text("仍不确定或需要继续查证的内容（可留空）", "What remains uncertain or needs checking (optional)")}
-            onChange={(event) => setDraft((current) => ({ ...current, unresolved: event.target.value }))}
+            onChange={(event) => changeDraft("unresolved", event.target.value)}
           />
         </label>
         <footer>
@@ -271,6 +294,7 @@ export function ResearchSummaryPanel({
             setEditing(false);
             setDraft(draftFromSummary(summary));
             setError(null);
+            setEditStatus(null);
           }}>{text("取消", "Cancel")}</button>
           <button className="button primary" type="submit" disabled={saving || generating}>{saving ? text("正在保存…", "Saving…") : text("保存", "Save")}</button>
         </footer>
