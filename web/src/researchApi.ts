@@ -440,6 +440,12 @@ export async function rejectCognitionUpdate(update: CognitionUpdate): Promise<Co
   return data.update;
 }
 
+export async function deleteCognitionDraft(update: CognitionUpdate): Promise<void> {
+  await request(`/api/research/cognition-updates/${encodeURIComponent(update.id)}`, {
+    method: "DELETE", body: JSON.stringify({ version: update.version }),
+  });
+}
+
 export type CognitionUpdateChanges = {
   updateType: CognitionUpdateType;
   newInformation: string;

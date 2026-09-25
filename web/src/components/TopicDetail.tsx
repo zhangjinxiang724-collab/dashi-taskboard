@@ -4,21 +4,24 @@ import { ApiError } from "../api";
 import { useTaskboardI18n } from "../i18n";
 import {
   linkTopicTask,
+  getResearchRecordContent,
   markTopicResearched,
   moveTopic,
   unlinkTopicTask,
+  updateTopic,
 } from "../researchApi";
 import {
-  RESEARCH_STATUSES,
+  type CognitionUpdate,
   type ResearchStatus,
   type ResearchTaskSummary,
   type TopicDetail as TopicDetailType,
 } from "../researchTypes";
 import type { Task } from "../types";
-import { confidenceLabel, researchStatusLabel } from "./TopicEditor";
+import { researchStatusLabel, VISIBLE_RESEARCH_STATUSES, visibleResearchStatus } from "./TopicEditor";
 import { TopicQuestionList } from "./TopicQuestionList";
 import { ResearchRecordSection } from "./ResearchRecordSection";
 import { CognitionUpdateHistory } from "./CognitionUpdateHistory";
+import { CognitionUpdateEditor } from "./CognitionUpdateEditor";
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -67,6 +70,12 @@ export function TopicDetail({
   const [cognitionRefreshKey, setCognitionRefreshKey] = useState(0);
   const [linkTaskId, setLinkTaskId] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [activeStep, setActiveStep] = useState(0);
+  const [editingCurrentView, setEditingCurrentView] = useState(false);
+  const [currentViewDraft, setCurrentViewDraft] = useState(topic.currentView);
+  const [historyDraft, setHistoryDraft] = useState<CognitionUpdate | null>(null);
+  const [historySourceTextComplete, setHistorySourceTextComplete] = useState(true);
+  const [summaryCounts, setSummaryCounts] = useState({ completed: 0, pending: 0 });
 
   const linkedTaskIds = useMemo(
     () => new Set(topic.tasks.map((task) => task.id)),
@@ -87,7 +96,7 @@ export function TopicDetail({
   }
 
   async function changeStatus(status: ResearchStatus) {
-    if (topic.status === status) return;
+    if (visibleResearchStatus(topic.status) === status) return;
     setPending(true);
     setError(null);
     try {
@@ -97,6 +106,35 @@ export function TopicDetail({
     } finally {
       setPending(false);
     }
+  }
+
+  async function saveCurrentView() {
+    setPending(true);
+    setError(null);
+    try {
+      onChange(await updateTopic(topic, { currentView: currentViewDraft.trim() }));
+      setEditingCurrentView(false);
+    } catch (operationError) {
+      setOperationError(operationError);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  function goToStep(index: number) {
+    const target = ["topic-intro", "topic-sources", "topic-summaries", "topic-cognition"][index];
+    document.getElementById(target)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setActiveStep(index);
+  }
+
+  async function openHistoryDraft(update: CognitionUpdate) {
+    try {
+      const content = await getResearchRecordContent(update.recordId, update.sourceContentVersionNumber ?? undefined);
+      setHistorySourceTextComplete(content.completenessDetails?.textTranscriptComplete ?? content.completeness === "complete");
+    } catch {
+      setHistorySourceTextComplete(false);
+    }
+    setHistoryDraft(update);
   }
 
   async function markResearched() {
@@ -160,39 +198,39 @@ export function TopicDetail({
         <div className="research-topic-meta">
           <label className="research-status-control">
             <span className="sr-only">{text("研究状态", "Research status")}</span>
-            <select disabled={pending} value={topic.status} onChange={(event) => void changeStatus(event.target.value as ResearchStatus)}>
-              {RESEARCH_STATUSES.map((status) => <option key={status} value={status}>{researchStatusLabel(status, text)}</option>)}
+            <select disabled={pending} value={visibleResearchStatus(topic.status)} onChange={(event) => void changeStatus(event.target.value as ResearchStatus)}>
+              {VISIBLE_RESEARCH_STATUSES.map((status) => <option key={status} value={status}>{researchStatusLabel(status, text)}</option>)}
             </select>
           </label>
           <span className="research-meta-date">{text("创建于", "Created")} {new Intl.DateTimeFormat(undefined,{year:"numeric",month:"long",day:"numeric"}).format(new Date(topic.createdAt))}</span>
           <span className="research-meta-separator" aria-hidden="true">·</span>
           <span className="research-meta-date">{text(`共 ${recordCount} 份资料`, `${recordCount} sources`)}</span>
         </div>
-        {topic.labels.length > 0 && <div className="research-labels">{topic.labels.map((label) => <span key={label}>{label}</span>)}</div>}
       </div>
 
       <nav className="research-journey" aria-label={text("研究主线", "Research journey")}>
         {[
           [text("研究主题", "Topic"), text("明确问题与方向", "Define the question")],
-          [text("研究资料", "Sources"), text("阅读资料，提取信息", "Read and extract")],
-          [text("内容总结", "Summary"), text("生成关键结论", "Form conclusions")],
-          [text("更新认知", "Cognition"), text("形成新的观点", "Update your view")],
-        ].map(([label, description],index) => <span key={label} className={index === 0 ? "active" : ""}><i>{index + 1}</i><b>{label}<small>{description}</small></b></span>)}
+          [text("研究资料", "Sources"), text(`${recordCount} 份资料`, `${recordCount} sources`)],
+          [text("内容总结", "Summary"), text(`已完成 ${summaryCounts.completed} · 待总结 ${summaryCounts.pending}`, `${summaryCounts.completed} done · ${summaryCounts.pending} pending`)],
+          [text("更新认知", "Cognition"), text("查看认知变化", "View changes")],
+        ].map(([label, description],index) => <button key={label} type="button" className={index === activeStep ? "active" : ""} aria-current={index === activeStep ? "step" : undefined} onClick={() => goToStep(index)}><i>{index + 1}</i><b>{label}<small>{description}</small></b></button>)}
       </nav>
 
-      <section className="research-reading-section research-current-state">
+      <section id="topic-intro" className="research-reading-section research-current-state">
         <div className="research-reading-heading">
           <h2>{text("当前观点", "Current View")}</h2>
-          <button className="research-inline-action" type="button" onClick={onEdit}>{text("编辑", "Edit")}</button>
+          {!editingCurrentView && <button className="research-inline-action" type="button" onClick={() => { setCurrentViewDraft(topic.currentView); setEditingCurrentView(true); }}>{text("编辑", "Edit")}</button>}
         </div>
-        {topic.currentView ? (
+        {editingCurrentView ? <div className="research-view-editor"><textarea aria-label={text("当前观点", "Current View")} value={currentViewDraft} onChange={(event) => setCurrentViewDraft(event.target.value)} /><div><button className="button" type="button" onClick={() => setEditingCurrentView(false)}>{text("取消", "Cancel")}</button><button className="button primary" type="button" disabled={pending} onClick={() => void saveCurrentView()}>{text("保存观点", "Save view")}</button></div></div> : topic.currentView ? (
           <p>{topic.currentView}</p>
         ) : (
           <div className="research-friendly-empty">
             <p>{text("当前还没有形成明确观点。研究一段时间后，把现在最核心的判断留在这里。", "No clear view has formed yet. Leave your most important current judgment here after some research.")}</p>
-            <button className="button" type="button" onClick={onEdit}>{text("添加当前观点", "Add current view")}</button>
+            <button className="button" type="button" onClick={() => { setCurrentViewDraft(topic.currentView); setEditingCurrentView(true); }}>{text("添加当前观点", "Add current view")}</button>
           </div>
         )}
+        <div className="research-topic-question"><strong>{text("核心问题", "Core question")}</strong><p>{topic.coreQuestion || text("尚未填写", "Not added yet")}</p></div>
       </section>
 
       <ResearchRecordSection
@@ -201,15 +239,22 @@ export function TopicDetail({
         onTopicChange={onChange}
         onCognitionChanged={() => setCognitionRefreshKey((value) => value + 1)}
         onCountChange={onRecordCountChange}
+        onSummaryCountsChange={setSummaryCounts}
       />
 
-      <button className="research-settings-toggle" type="button" aria-expanded={showSettings} onClick={() => setShowSettings((value) => !value)}>{text("研究设置", "Research settings")} <span>{showSettings ? "−" : "+"}</span></button>
+      <CognitionUpdateHistory topicId={topic.id} currentView={topic.currentView} refreshKey={cognitionRefreshKey} onEditDraft={(update) => void openHistoryDraft(update)} />
+      {historyDraft && <CognitionUpdateEditor
+        initialUpdate={historyDraft}
+        sourceTextComplete={historySourceTextComplete}
+        onClose={() => setHistoryDraft(null)}
+        onApplied={onChange}
+        onChanged={() => setCognitionRefreshKey((value) => value + 1)}
+      />}
+
+      <button className="research-settings-toggle" type="button" aria-expanded={showSettings} onClick={() => setShowSettings((value) => !value)}>{text("研究计划与更多", "Research plan and more")} <span>{showSettings ? "−" : "+"}</span></button>
       {showSettings && <div className="research-secondary-settings">
+      {topic.labels.length > 0 && <div className="research-labels">{topic.labels.map((label) => <span key={label}>{label}</span>)}</div>}
       <div className="research-focus-grid">
-        <section className="research-reading-section research-core-question">
-          <div className="research-reading-heading"><h2>{text("核心问题", "Core Question")}</h2></div>
-          <p>{topic.coreQuestion || text("还没有写下这个主题最需要回答的问题。", "The central question for this topic has not been written yet.")}</p>
-        </section>
         <section className="research-reading-section research-next-action">
           <div className="research-reading-heading"><h2>{text("下一步", "Next Action")}</h2></div>
           <p>{topic.nextAction || text("还没有安排下一步。可以从一个最小、可验证的问题开始。", "No next step yet. Start with one small, verifiable question.")}</p>
@@ -263,7 +308,6 @@ export function TopicDetail({
       </section>
 
       </div>}
-      <CognitionUpdateHistory topicId={topic.id} refreshKey={cognitionRefreshKey} />
     </section>
   );
 }

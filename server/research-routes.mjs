@@ -1069,7 +1069,15 @@ export async function handleResearchRequest({
       sendJson(response, 200, { update });
       return true;
     }
-    methodNotAllowed(response, ["GET", "PATCH"]);
+    if (request.method === "DELETE") {
+      const result = research.deleteCognitionDraft(updateId, parseVersionOnly(await readJson(request), ApiError));
+      if (result.kind === "not_found") throw new ApiError(404, "COGNITION_UPDATE_NOT_FOUND", "Cognition update not found");
+      if (result.kind === "not_draft") throw new ApiError(409, "COGNITION_UPDATE_NOT_DRAFT", "Only draft cognition updates can be deleted", { status: result.status });
+      if (result.kind === "conflict") throw new ApiError(409, "COGNITION_UPDATE_VERSION_CONFLICT", "Cognition update was changed by another request", { currentVersion: result.currentVersion });
+      sendJson(response, 200, { deleted: true });
+      return true;
+    }
+    methodNotAllowed(response, ["GET", "PATCH", "DELETE"]);
     return true;
   }
 

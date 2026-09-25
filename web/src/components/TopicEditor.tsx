@@ -2,8 +2,6 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import { useTaskboardI18n } from "../i18n";
 import {
-  CONFIDENCE_LEVELS,
-  RESEARCH_STATUSES,
   type ConfidenceLevel,
   type ResearchStatus,
   type Topic,
@@ -11,13 +9,21 @@ import {
 } from "../researchTypes";
 
 const STATUS_LABELS: Record<ResearchStatus, readonly [string, string]> = {
-  inbox: ["待整理", "Inbox"],
-  active: ["研究中", "Active Research"],
-  waiting: ["等待", "Waiting"],
-  thesis_formed: ["观点已形成", "Thesis Formed"],
-  tracking: ["持续跟踪", "Tracking"],
+  inbox: ["进行中", "In progress"],
+  active: ["进行中", "In progress"],
+  waiting: ["暂停", "Paused"],
+  thesis_formed: ["持续关注", "Following"],
+  tracking: ["持续关注", "Following"],
   archived: ["已归档", "Archived"],
 };
+
+export const VISIBLE_RESEARCH_STATUSES = ["active", "waiting", "tracking", "archived"] as const;
+
+export function visibleResearchStatus(status: ResearchStatus): (typeof VISIBLE_RESEARCH_STATUSES)[number] {
+  if (status === "inbox") return "active";
+  if (status === "thesis_formed") return "tracking";
+  return status;
+}
 
 const CONFIDENCE_LABELS: Record<ConfidenceLevel, readonly [string, string]> = {
   low: ["低置信度", "Low confidence"],
@@ -54,12 +60,8 @@ export function TopicEditor({
 }) {
   const { text } = useTaskboardI18n();
   const [title, setTitle] = useState(topic?.title ?? "");
-  const [status, setStatus] = useState<ResearchStatus>(topic?.status ?? "inbox");
+  const [status, setStatus] = useState<ResearchStatus>(visibleResearchStatus(topic?.status ?? "active"));
   const [coreQuestion, setCoreQuestion] = useState(topic?.coreQuestion ?? "");
-  const [currentView, setCurrentView] = useState(topic?.currentView ?? "");
-  const [confidenceLevel, setConfidenceLevel] = useState<ConfidenceLevel | null>(
-    topic?.confidenceLevel ?? null,
-  );
   const [nextAction, setNextAction] = useState(topic?.nextAction ?? "");
   const [reviewTrigger, setReviewTrigger] = useState(topic?.reviewTrigger ?? "");
   const [labels, setLabels] = useState(topic?.labels.join(", ") ?? "");
@@ -76,10 +78,10 @@ export function TopicEditor({
     event.preventDefault();
     onSave({
       title: title.trim(),
-      status,
+      status: topic && status === visibleResearchStatus(topic.status) ? topic.status : status,
       coreQuestion: coreQuestion.trim(),
-      currentView: currentView.trim(),
-      confidenceLevel,
+      currentView: topic?.currentView ?? "",
+      confidenceLevel: topic?.confidenceLevel ?? null,
       nextAction: nextAction.trim(),
       reviewTrigger: reviewTrigger.trim(),
       labels: [...new Set(labels.split(",").map((label) => label.trim()).filter(Boolean))],
@@ -110,31 +112,20 @@ export function TopicEditor({
             <textarea rows={3} maxLength={500} value={coreQuestion} onChange={(event) => setCoreQuestion(event.target.value)} placeholder={text("例如：试点是否显著提升了公交运行效率？", "For example: Did the pilot improve transit efficiency?")} />
             <small className="research-topic-character-count">{coreQuestion.length}/500</small>
           </label>
+          <label>
+            <span>{text("研究状态", "Research status")}</span>
+            <select value={status} onChange={(event) => setStatus(event.target.value as ResearchStatus)}>
+              {VISIBLE_RESEARCH_STATUSES.map((candidate) => <option key={candidate} value={candidate}>{researchStatusLabel(candidate, text)}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>{text("标签（可选）", "Labels (optional)")}</span>
+            <input value={labels} onChange={(event) => setLabels(event.target.value)} />
+          </label>
           <p className="research-topic-form-hint wide">{text("先写下主题名称就可以开始，其他内容以后再补。", "Start with a title. You can add the rest later.")}</p>
-          <details className="research-topic-more wide" open={Boolean(topic)}>
-            <summary><span><strong>{text("更多设置", "More settings")}</strong><small>{text("研究状态、置信度、标签、当前观点、下一步等", "Status, confidence, labels, current view and next steps")}</small></span><i aria-hidden="true">⌄</i></summary>
+          <details className="research-topic-more wide">
+            <summary><span><strong>{text("研究计划", "Research plan")}</strong><small>{text("下一步与重新研究的条件", "Next step and review trigger")}</small></span><i aria-hidden="true">⌄</i></summary>
             <div className="research-form-fields">
-              <label>
-                <span>{text("研究状态", "Research status")}</span>
-                <select value={status} onChange={(event) => setStatus(event.target.value as ResearchStatus)}>
-                  {RESEARCH_STATUSES.map((candidate) => <option key={candidate} value={candidate}>{researchStatusLabel(candidate, text)}</option>)}
-                </select>
-              </label>
-              <label>
-                <span>{text("置信度", "Confidence")}</span>
-                <select value={confidenceLevel ?? ""} onChange={(event) => setConfidenceLevel((event.target.value || null) as ConfidenceLevel | null)}>
-                  <option value="">{text("未设置", "Not set")}</option>
-                  {CONFIDENCE_LEVELS.map((candidate) => <option key={candidate} value={candidate}>{confidenceLabel(candidate, text)}</option>)}
-                </select>
-              </label>
-              <label className="wide">
-                <span>{text("标签（逗号分隔）", "Labels (comma separated)")}</span>
-                <input value={labels} onChange={(event) => setLabels(event.target.value)} />
-              </label>
-              <label className="wide">
-                <span>{text("当前观点", "Current View")}</span>
-                <textarea rows={5} value={currentView} onChange={(event) => setCurrentView(event.target.value)} />
-              </label>
               <label className="wide">
                 <span>{text("下一步行动", "Next Action")}</span>
                 <textarea rows={3} value={nextAction} onChange={(event) => setNextAction(event.target.value)} />

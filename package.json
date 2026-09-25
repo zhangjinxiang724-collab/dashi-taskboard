@@ -37,7 +37,7 @@
     "test": "npm run test:node && npm run test:extension && npm run test:components",
     "test:node": "node --test --test-concurrency=1 test/*.test.mjs",
     "test:extension": "vitest run extensions/research-os-chrome/test/*.test.ts",
-    "test:components": "vitest run web/src/components/MarkdownDocument.test.tsx web/src/components/ResearchInbox.test.tsx web/src/components/ResearchCompletenessPanel.test.tsx web/src/components/CognitionUpdateEditor.test.tsx web/src/components/ResearchSummaryPanel.test.tsx web/src/researchCompletenessPresentation.test.ts --environment jsdom",
+    "test:components": "vitest run web/src/components/MarkdownDocument.test.tsx web/src/components/ResearchInbox.test.tsx web/src/components/ResearchCompletenessPanel.test.tsx web/src/components/CognitionUpdateEditor.test.tsx web/src/components/ResearchSummaryPanel.test.tsx web/src/components/ResearchFirstUseFeedback.test.tsx web/src/researchCompletenessPresentation.test.ts --environment jsdom",
     "test:cloud": "node --test test/cloud-shared-worker.test.mjs",
     "cloud:migrate:local": "wrangler d1 migrations apply codex-taskboard-db --local",
     "cloud:migrate": "wrangler d1 migrations apply codex-taskboard-db --remote",

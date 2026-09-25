@@ -1787,3 +1787,67 @@
   .research-summary-content > section p { grid-column: 1 / -1; }
   .cognition-update-types { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* The four research steps are navigation, not a decorative progress bar. */
+.research-journey button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 15px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #454b55;
+  text-align: left;
+  cursor: pointer;
+}
+.research-journey button:hover,
+.research-journey button:focus-visible { background: #fff1f5; outline-color: #d27b95; }
+.research-journey button.active { color: #17191c; }
+.research-journey button.active i { background: #db7190; color: white; }
+.research-journey button:not(:last-child)::after { position: absolute; right: 0; content: "→"; color: #aeb4bc; }
+#topic-intro, #topic-sources, #topic-summaries, #topic-cognition { scroll-margin-top: 18px; }
+.research-status-control select { width: auto; min-width: 110px; max-width: 170px; padding-right: 28px; }
+.research-view-editor textarea { width: 100%; min-height: 120px; padding: 14px; resize: vertical; }
+.research-view-editor > div { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.research-topic-question { margin-top: 22px; padding-top: 18px; border-top: 1px solid #e9ebef; }
+.research-topic-question p { margin: 8px 0 0; color: #5f6875; }
+.research-summary-list { display: block !important; padding: 24px !important; }
+.research-summary-list > p { margin: 12px 0 !important; }
+.research-summary-list-row { display: flex; justify-content: space-between; gap: 20px; padding: 17px 0; border-top: 1px solid #eceef1; }
+.research-summary-list-row p { margin: 6px 0 !important; color: #515a66; }
+.research-summary-list-row small { color: #828b98; }
+.research-summary-list-row button { align-self: center; white-space: nowrap; }
+.research-summary-pending { padding-top: 14px; border-top: 1px solid #eceef1; }
+.research-summary-pending h4 { margin: 0 0 8px; }
+.research-summary-pending button { display: block; width: 100%; padding: 9px 0; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.cognition-timeline { display: grid; gap: 24px; }
+.cognition-timeline > header { padding-bottom: 16px; border-bottom: 1px solid #eceef1; }
+.cognition-timeline > header span, .cognition-timeline small { color: #828b98; font-size: 12px; }
+.cognition-timeline > header h2 { margin: 5px 0 10px; }
+.cognition-timeline > header p { margin: 0; white-space: pre-wrap; line-height: 1.7; }
+.cognition-timeline h3 { margin: 0 0 12px; }
+.cognition-drafts article, .cognition-applied article, .cognition-rejected article { padding: 16px 0; border-top: 1px solid #eceef1; }
+.cognition-drafts article > div:first-child, .cognition-timeline-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.cognition-drafts article p, .cognition-applied article > p { margin: 8px 0; line-height: 1.6; }
+.cognition-draft-actions { display: flex; gap: 8px; margin-top: 12px; }
+.cognition-before-after { display: grid; grid-template-columns: minmax(0,1fr) 20px minmax(0,1fr); gap: 12px; align-items: center; margin: 12px 0; }
+.cognition-before-after p { min-width: 0; margin: 0; padding: 12px; border-radius: 9px; background: #f7f8fa; overflow-wrap: anywhere; }
+.cognition-before-after b, .cognition-applied details b { display: block; margin-bottom: 5px; }
+.cognition-applied details summary, .cognition-rejected summary { cursor: pointer; }
+.cognition-applied details > div { display: grid; gap: 8px; padding: 12px 0; }
+.cognition-applied details p { margin: 0; white-space: pre-wrap; }
+.cognition-rejected { padding-top: 12px; border-top: 1px solid #eceef1; }
+.cognition-delete-dialog { width: min(440px, calc(100vw - 32px)); margin: auto; padding: 28px; border-radius: 14px; background: #fff; box-shadow: 0 24px 70px rgba(27,34,44,.2); }
+.cognition-delete-dialog h3 { margin: 0 0 10px; }
+.cognition-delete-dialog p { margin: 0 0 24px; color: #5f6875; line-height: 1.6; }
+.cognition-delete-dialog > div { display: flex; justify-content: flex-end; gap: 8px; }
+@media (max-width: 640px) {
+  .research-journey button::after { display: none; }
+  .research-journey small { white-space: normal; }
+  .research-summary-list-row { flex-direction: column; }
+  .cognition-before-after { grid-template-columns: 1fr; }
+}

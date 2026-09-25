@@ -33,11 +33,13 @@ export function ResearchRecordReader({
   onClose,
   backLabel,
   actions,
+  initialVersionNumber,
 }: {
   record: ResearchRecord;
   onClose: () => void;
   backLabel?: string;
   actions?: ReactNode | ((context: { sourceContentVersionId: string | null; sourceTextComplete: boolean }) => ReactNode);
+  initialVersionNumber?: number;
 }) {
   const { text } = useTaskboardI18n();
   const [content, setContent] = useState<ResearchRecordContent | null>(null);
@@ -48,7 +50,7 @@ export function ResearchRecordReader({
   useEffect(() => {
     let active = true;
     Promise.all([
-      getResearchRecordContent(record.id),
+      getResearchRecordContent(record.id, initialVersionNumber),
       listResearchRecordContentVersions(record.id),
     ])
       .then(([nextContent, nextVersions]) => {
@@ -63,7 +65,7 @@ export function ResearchRecordReader({
         if (active) setLoading(false);
       });
     return () => { active = false; };
-  }, [record.captureAdapter, record.id]);
+  }, [initialVersionNumber, record.captureAdapter, record.id]);
 
   async function selectVersion(version: number) {
     setLoading(true);

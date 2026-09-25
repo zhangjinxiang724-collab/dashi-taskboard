@@ -39,12 +39,14 @@ export function ResearchRecordSection({
   onTopicChange,
   onCognitionChanged,
   onCountChange,
+  onSummaryCountsChange,
 }: {
   topicId: string;
   onCapture: () => void;
   onTopicChange: (topic: TopicDetail) => void;
   onCognitionChanged: () => void;
   onCountChange?: (count: number) => void;
+  onSummaryCountsChange?: (counts: { completed: number; pending: number }) => void;
 }) {
   const { text } = useTaskboardI18n();
   const [records, setRecords] = useState<ResearchRecord[]>([]);
@@ -54,10 +56,12 @@ export function ResearchRecordSection({
   const [editorInitialContent, setEditorInitialContent] = useState("");
   const [pending, setPending] = useState(false);
   const [readerRecord, setReaderRecord] = useState<ResearchRecord | null>(null);
+  const [readerVersionNumber, setReaderVersionNumber] = useState<number | undefined>();
   const [cognitionUpdate, setCognitionUpdate] = useState<CognitionUpdate | null>(null);
   const [cognitionSourceTextComplete, setCognitionSourceTextComplete] = useState(true);
   const [readerNotice, setReaderNotice] = useState<string | null>(null);
-  const [latestSummary, setLatestSummary] = useState<{ record: ResearchRecord; summary: ResearchRecordSummary } | null>(null);
+  const [summaries, setSummaries] = useState<Array<{ record: ResearchRecord; summary: ResearchRecordSummary; versionNumber: number; isCurrent: boolean }>>([]);
+  const [summaryRefreshKey, setSummaryRefreshKey] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -68,16 +72,22 @@ export function ResearchRecordSection({
         setRecords(sorted);
         onCountChange?.(sorted.length);
         setError(null);
-        const summaries = await Promise.all(sorted.map(async (record) => {
+        const summariesByRecord = await Promise.all(sorted.map(async (record) => {
           try {
             const versions = await listResearchRecordContentVersions(record.id);
-            const current = versions.find((version) => version.isCurrent) ?? versions[0];
-            if (!current) return null;
-            const summary = await getResearchRecordSummary(record.id, current.id);
-            return summary ? { record, summary } : null;
-          } catch { return null; }
+            return (await Promise.all(versions.map(async (version) => {
+              const summary = await getResearchRecordSummary(record.id, version.id);
+              return summary ? { record, summary, versionNumber: version.versionNumber, isCurrent: version.isCurrent } : null;
+            }))).filter((item): item is NonNullable<typeof item> => item !== null);
+          } catch { return []; }
         }));
-        if (!controller.signal.aborted) setLatestSummary(summaries.find((item) => item !== null) ?? null);
+        if (!controller.signal.aborted) {
+          const completed = summariesByRecord.flat()
+            .sort((left, right) => right.summary.updatedAt.localeCompare(left.summary.updatedAt));
+          setSummaries(completed);
+          const currentCompleted = new Set(completed.filter((item) => item.isCurrent).map((item) => item.record.id));
+          onSummaryCountsChange?.({ completed: currentCompleted.size, pending: sorted.length - currentCompleted.size });
+        }
       })
       .catch((loadError) => {
         if (!controller.signal.aborted) setError(errorMessage(loadError));
@@ -86,7 +96,7 @@ export function ResearchRecordSection({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [onCountChange, topicId]);
+  }, [onCountChange, onSummaryCountsChange, summaryRefreshKey, topicId]);
 
   async function save(draft: ResearchRecordDraft) {
     setPending(true);
@@ -105,6 +115,7 @@ export function ResearchRecordSection({
       }
       setEditorRecord(undefined);
       setEditorInitialContent("");
+      setSummaryRefreshKey((value) => value + 1);
     } catch (saveError) {
       if (saveError instanceof ApiError && saveError.code === "RESEARCH_RECORD_VERSION_CONFLICT") {
         setError(text("这条研究记录已在别处更新，请关闭编辑窗口并刷新页面后重试。", "This record changed elsewhere. Close the editor, refresh, and try again."));
@@ -155,6 +166,7 @@ export function ResearchRecordSection({
         onCountChange?.(next.length);
         return next;
       });
+      setSummaryRefreshKey((value) => value + 1);
     } catch (deleteError) {
       setError(errorMessage(deleteError));
     } finally {
@@ -183,9 +195,11 @@ export function ResearchRecordSection({
     month: "2-digit",
     day: "2-digit",
   });
+  const summarizedCurrentRecordIds = new Set(summaries.filter((item) => item.isCurrent).map((item) => item.record.id));
+  const pendingSummaryRecords = records.filter((record) => !summarizedCurrentRecordIds.has(record.id));
 
   return (
-    <section className="research-records-panel" data-testid="research-records">
+    <section id="topic-sources" className="research-records-panel" data-testid="research-records">
       <div className="research-section-heading research-records-heading">
         <div>
           <h2>{text("研究资料", "Research Sources")}</h2>
@@ -222,8 +236,8 @@ export function ResearchRecordSection({
                 {record.note && <p className="research-record-note">{record.note}</p>}
               </div>
               <div className="research-record-actions">
-                <button type="button" disabled={pending} onClick={() => { setReaderNotice(null); setReaderRecord(record); }}>{text("查看资料", "View source")}</button>
-                <button className="research-record-summary-action" type="button" disabled={pending} onClick={() => { setReaderNotice(null); setReaderRecord(record); }}>{text("内容总结", "Summary")}</button>
+                <button type="button" disabled={pending} onClick={() => { setReaderNotice(null); setReaderVersionNumber(undefined); setReaderRecord(record); }}>{text("查看资料", "View source")}</button>
+                <button className="research-record-summary-action" type="button" disabled={pending} onClick={() => { setReaderNotice(null); setReaderVersionNumber(undefined); setReaderRecord(record); }}>{text("内容总结", "Summary")}</button>
                 <details className="research-record-more"><summary aria-label={text("更多操作", "More actions")}>•••</summary><div>{record.url && <a href={record.url} target="_blank" rel="noopener noreferrer">{text("打开原对话 ↗", "Open original ↗")}</a>}<button type="button" disabled={pending} onClick={() => void editRecord(record)}>{text("编辑", "Edit")}</button><button type="button" disabled={pending} onClick={() => void remove(record)}>{text("删除", "Delete")}</button></div></details>
               </div>
             </article>
@@ -231,9 +245,15 @@ export function ResearchRecordSection({
         </div>
       )}
 
-      <section className="research-latest-summary">
-        <div><span>{text("最近总结", "Latest summary")}</span><h3>{latestSummary ? latestSummary.record.title : text("还没有资料总结", "No source summary yet")}</h3></div>
-        {latestSummary ? <><p>{latestSummary.summary.oneLineSummary}</p><button className="button" type="button" onClick={() => { setReaderNotice(null); setReaderRecord(latestSummary.record); }}>{text("查看完整总结", "View full summary")}</button></> : <p>{text("完成一份资料总结后，最近的总结会出现在这里。", "Your latest saved summary will appear here.")}</p>}
+      <section id="topic-summaries" className="research-latest-summary research-summary-list">
+        <div><span>{text("逐条资料整理", "Source-by-source notes")}</span><h3>{text("内容总结", "Content summaries")}</h3></div>
+        <p>{text(`已保存总结 ${summaries.length} 条 · 当前版本待总结资料 ${pendingSummaryRecords.length} 条`, `${summaries.length} saved · ${pendingSummaryRecords.length} current sources pending`)}</p>
+        {summaries.length === 0 && <p>{text("还没有内容总结。打开一份资料后，可以先写下它的总结。", "No saved summaries yet. Open a source to summarise it.")}</p>}
+        {summaries.map(({ record, summary, versionNumber }) => <article className="research-summary-list-row" key={summary.id}>
+          <div><strong>{record.title}</strong><p>{summary.oneLineSummary}</p><small>资料 V{versionNumber} · {new Date(summary.updatedAt).toLocaleDateString()}</small></div>
+          <button className="button" type="button" onClick={() => { setReaderNotice(null); setReaderVersionNumber(versionNumber); setReaderRecord(record); }}>{text("查看总结", "View summary")}</button>
+        </article>)}
+        {pendingSummaryRecords.length > 0 && <div className="research-summary-pending"><h4>{text("待总结资料", "Sources to summarise")}</h4>{pendingSummaryRecords.map((record) => <button key={record.id} type="button" onClick={() => { setReaderNotice(null); setReaderVersionNumber(undefined); setReaderRecord(record); }}>{record.title} →</button>)}</div>}
       </section>
 
       {editorRecord !== undefined && (
@@ -252,7 +272,8 @@ export function ResearchRecordSection({
       )}
       {readerRecord && <ResearchRecordReader
         record={readerRecord}
-        onClose={() => { setReaderNotice(null); setReaderRecord(null); }}
+        initialVersionNumber={readerVersionNumber}
+        onClose={() => { setReaderNotice(null); setReaderRecord(null); setSummaryRefreshKey((value) => value + 1); }}
         actions={({ sourceContentVersionId, sourceTextComplete }) => (
           <div className="research-cognition-entry">
             {readerNotice && <p className="research-operation-success" role="status">{readerNotice}</p>}

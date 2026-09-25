@@ -893,6 +893,18 @@ export class ResearchDatabase {
     return { kind: "rejected", update: this.getCognitionUpdate(id) };
   }
 
+  deleteCognitionDraft(id, version) {
+    const current = this.getCognitionUpdate(id);
+    if (!current) return { kind: "not_found" };
+    if (current.status !== "draft") return { kind: "not_draft", status: current.status };
+    if (current.version !== version) return { kind: "conflict", currentVersion: current.version };
+    const result = this.database.prepare(`
+      DELETE FROM cognition_updates WHERE id = ? AND version = ? AND status = 'draft'
+    `).run(id, version);
+    if (result.changes !== 1) return { kind: "conflict", currentVersion: this.getCognitionUpdate(id)?.version };
+    return { kind: "deleted" };
+  }
+
   findImportedDuplicate(provider, externalId, sourceFingerprint) {
     return this.database.prepare(`
       SELECT id, external_id, source_fingerprint FROM research_records

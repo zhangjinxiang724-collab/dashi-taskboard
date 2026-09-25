@@ -133,3 +133,49 @@ test("manual content changes create V2 while V1 Summary stays bound only to V1",
   assert.equal(v2Summary.body.summary, null);
   assert.equal((await request(baseUrl, `/api/research/records/${record.id}/content?version=2`)).body.content.content.messages[0].text, "第二版脱敏资料正文，增加了新的事实。");
 });
+
+test("deleting only a draft leaves the topic, record, summary and applied history unchanged", async () => {
+  const { baseUrl, directory } = await startServer();
+  const { topic, record } = await createManualRecord(baseUrl);
+  const sourceVersion = (await request(baseUrl, `/api/research/records/${record.id}/content-versions`)).body.versions[0];
+  await request(baseUrl, `/api/research/records/${record.id}/summary`, {
+    method: "POST", body: { sourceContentVersionId: sourceVersion.id, ...summaryDraft },
+  });
+  const create = () => request(baseUrl, `/api/research/topics/${topic.id}/cognition-updates`, {
+    method: "POST", body: { recordId: record.id, sourceContentVersionId: sourceVersion.id },
+  });
+  const draft = (await create()).body.update;
+  const endpoint = `/api/research/cognition-updates/${draft.id}`;
+  const stale = await request(baseUrl, endpoint, { method: "DELETE", body: { version: draft.version + 1 } });
+  assert.equal(stale.response.status, 409);
+  const deleted = await request(baseUrl, endpoint, { method: "DELETE", body: { version: draft.version } });
+  assert.equal(deleted.response.status, 200);
+  assert.equal(deleted.body.deleted, true);
+
+  const topicAfterDelete = (await request(baseUrl, `/api/research/topics/${topic.id}`)).body.topic;
+  assert.equal(topicAfterDelete.version, topic.version);
+  assert.equal(topicAfterDelete.currentView, topic.currentView);
+  assert.equal((await request(baseUrl, `/api/research/records/${record.id}/summary?contentVersionId=${sourceVersion.id}`)).body.summary.oneLineSummary, summaryDraft.oneLineSummary);
+  assert.equal((await request(baseUrl, `/api/research/topics/${topic.id}/cognition-updates`)).body.updates.length, 0);
+
+  const second = (await create()).body.update;
+  const filled = (await request(baseUrl, `/api/research/cognition-updates/${second.id}`, {
+    method: "PATCH", body: { version: second.version, updateType: "revise", newInformation: "新资料", impact: "调整判断", proposedCurrentView: "新观点" },
+  })).body.update;
+  const applied = (await request(baseUrl, `/api/research/cognition-updates/${second.id}/apply`, {
+    method: "POST", body: { version: filled.version },
+  })).body.update;
+  const appliedDelete = await request(baseUrl, `/api/research/cognition-updates/${applied.id}`, {
+    method: "DELETE", body: { version: applied.version },
+  });
+  assert.equal(appliedDelete.response.status, 409);
+  assert.equal(appliedDelete.body.error.code, "COGNITION_UPDATE_NOT_DRAFT");
+  assert.equal((await request(baseUrl, `/api/research/cognition-updates/${applied.id}`)).body.update.status, "applied");
+
+  const database = new DatabaseSync(path.join(directory, "taskboard.sqlite"));
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM research_records").get().count, 1);
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM research_record_summaries").get().count, 1);
+  assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
+  assert.equal(database.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+  database.close();
+});

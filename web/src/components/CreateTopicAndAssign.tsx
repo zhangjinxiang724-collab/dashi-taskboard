@@ -1,6 +1,9 @@
 import { useMemo, useState } from "react";
 
 import type { ResearchStatus, Topic } from "../researchTypes";
+import { visibleResearchStatus } from "./TopicEditor";
+
+const STATUS_LABELS = { active: "进行中", waiting: "暂停", tracking: "持续关注", archived: "已归档" } as const;
 
 export function CreateTopicAndAssign({
   count,
@@ -22,7 +25,7 @@ export function CreateTopicAndAssign({
   const [mode, setMode] = useState<"existing" | "new">(initialMode);
   const [search, setSearch] = useState("");
   const [title, setTitle] = useState("");
-  const [status, setStatus] = useState<ResearchStatus>("inbox");
+  const [status, setStatus] = useState<ResearchStatus>("active");
   const matches = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
     return topics.filter((topic) => !query || topic.title.toLocaleLowerCase().includes(query));
@@ -38,11 +41,11 @@ export function CreateTopicAndAssign({
         </nav>
         {mode === "existing" ? <div className="research-inbox-topic-picker">
           <input autoFocus type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索研究主题…" />
-          <div>{matches.map((topic) => <button key={topic.id} type="button" disabled={pending} onClick={() => onAssign(topic)}><strong>{topic.title}</strong><span>{topic.status === "inbox" ? "待整理主题" : topic.status === "active" ? "研究中" : "已有主题"}</span></button>)}</div>
+          <div>{matches.map((topic) => <button key={topic.id} type="button" disabled={pending} onClick={() => onAssign(topic)}><strong>{topic.title}</strong><span>{STATUS_LABELS[visibleResearchStatus(topic.status)]}</span></button>)}</div>
           {matches.length === 0 && <p>没有找到匹配的主题。你可以直接创建一个新主题。</p>}
         </div> : <form onSubmit={(event) => { event.preventDefault(); if (title.trim()) onCreate(title.trim(), status); }}>
           <label><span>主题名称</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：伯克希尔长期投资研究" /></label>
-          <label><span>初始状态</span><select value={status} onChange={(event) => setStatus(event.target.value as ResearchStatus)}><option value="inbox">待整理主题</option><option value="active">研究中</option><option value="waiting">等待</option><option value="tracking">持续跟踪</option></select></label>
+          <label><span>初始状态</span><select value={status} onChange={(event) => setStatus(event.target.value as ResearchStatus)}><option value="active">进行中</option><option value="waiting">暂停</option><option value="tracking">持续关注</option><option value="archived">已归档</option></select></label>
           <p>创建成功后，所选记录会在同一个事务中归入新主题。</p>
           <footer><button type="button" onClick={onClose}>取消</button><button className="button primary" type="submit" disabled={pending || !title.trim()}>{pending ? "正在创建…" : "创建并归入"}</button></footer>
         </form>}
